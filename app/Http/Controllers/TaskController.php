@@ -2,25 +2,25 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Task;
-use App\Models\Project;
-use App\Models\TaskStatusHistory;
 use App\Models\ActivityLog;
+use App\Models\Project;
+use App\Models\Task;
+use App\Models\TaskAttachment;
+use App\Models\TaskComment;
+use App\Models\TaskStatusHistory;
+use App\Services\ProjectProgressService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class TaskController extends Controller
 {
-    /**
-     * Display a listing of tasks.
-     */
     public function index()
     {
         $user = Auth::user();
         $projectIds = $user->projects()->pluck('projects.id');
 
-        // Show tasks relevant to current user: assigned, created, or in joined projects
         $tasks = Task::query()
             ->with(['project.workspace', 'assignee', 'statusWeight'])
             ->where(function ($query) use ($user, $projectIds) {
@@ -34,9 +34,6 @@ class TaskController extends Controller
         return view('tasks.index', compact('tasks'));
     }
 
-    /**
-     * Show the form for creating a new task.
-     */
     public function create(Request $request)
     {
         $projectId = $request->query('project_id');
@@ -44,25 +41,17 @@ class TaskController extends Controller
 
         if ($projectId) {
             $project = Project::findOrFail($projectId);
-
-            // Check if user is project member
             if (!$project->isMember(Auth::user())) {
                 abort(403, 'You must be a project member to create tasks.');
             }
         }
 
-        // Get projects where user is member
         $projects = Auth::user()->projects;
-
-        // Get potential assignees (project members)
         $assignees = $project ? $project->members : collect();
 
         return view('tasks.create', compact('projects', 'project', 'assignees'));
     }
 
-    /**
-     * Store a newly created task in storage.
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -78,7 +67,6 @@ class TaskController extends Controller
             'due_date' => 'nullable|date|after_or_equal:start_date',
         ]);
 
-        // Check if user is project member
         $project = Project::findOrFail($validated['project_id']);
         if (!$project->isMember(Auth::user())) {
             abort(403, 'You must be a project member to create tasks.');
@@ -100,7 +88,6 @@ class TaskController extends Controller
                 'created_by' => Auth::id(),
             ]);
 
-            // Log status history
             TaskStatusHistory::create([
                 'task_id' => $task->id,
                 'from_status' => null,
@@ -108,7 +95,6 @@ class TaskController extends Controller
                 'changed_by' => Auth::id(),
             ]);
 
-            // Log activity
             ActivityLog::create([
                 'user_id' => Auth::id(),
                 'action' => 'created',
@@ -117,23 +103,20 @@ class TaskController extends Controller
                 'description' => 'Created task: ' . $task->name,
             ]);
 
+            app(ProjectProgressService::class)->recordActualProgress($project);
+
             DB::commit();
 
             return redirect()->route('projects.show', $project)
                 ->with('success', 'Task created successfully!');
-
         } catch (\Exception $e) {
             DB::rollBack();
             return back()->withErrors(['error' => 'Failed to create task.'])->withInput();
         }
     }
 
-    /**
-     * Display the specified task.
-     */
     public function show(Task $task)
     {
-        // Check if user is project member
         if (!$task->project->isMember(Auth::user())) {
             abort(403, 'You do not have access to this task.');
         }
@@ -152,12 +135,8 @@ class TaskController extends Controller
         return view('tasks.show', compact('task'));
     }
 
-    /**
-     * Show the form for editing the specified task.
-     */
     public function edit(Task $task)
     {
-        // Check if user is project member
         if (!$task->project->isMember(Auth::user())) {
             abort(403, 'You do not have access to edit this task.');
         }
@@ -168,12 +147,8 @@ class TaskController extends Controller
         return view('tasks.edit', compact('task', 'project', 'assignees'));
     }
 
-    /**
-     * Update the specified task in storage.
-     */
     public function update(Request $request, Task $task)
     {
-        // Check if user is project member
         if (!$task->project->isMember(Auth::user())) {
             abort(403, 'You do not have access to update this task.');
         }
@@ -194,7 +169,6 @@ class TaskController extends Controller
             $oldStatus = $task->status;
             $changes = [];
 
-            // Track changes
             foreach ($validated as $key => $value) {
                 if ($task->{$key} != $value) {
                     $changes[$key] = [
@@ -204,10 +178,8 @@ class TaskController extends Controller
                 }
             }
 
-            // Update task
             $task->update($validated);
 
-            // If status changed, log it
             if ($oldStatus != $validated['status']) {
                 TaskStatusHistory::create([
                     'task_id' => $task->id,
@@ -216,7 +188,6 @@ class TaskController extends Controller
                     'changed_by' => Auth::id(),
                 ]);
 
-                // If completed, set completed_at
                 if ($validated['status'] === 'completed') {
                     $task->update(['completed_at' => now()]);
                 } else {
@@ -224,7 +195,6 @@ class TaskController extends Controller
                 }
             }
 
-            // Log activity
             if (!empty($changes)) {
                 ActivityLog::create([
                     'user_id' => Auth::id(),
@@ -237,30 +207,26 @@ class TaskController extends Controller
                 ]);
             }
 
+            app(ProjectProgressService::class)->recordActualProgress($task->project);
+
             DB::commit();
 
             return redirect()->route('tasks.show', $task)
                 ->with('success', 'Task updated successfully!');
-
         } catch (\Exception $e) {
             DB::rollBack();
             return back()->withErrors(['error' => 'Failed to update task.'])->withInput();
         }
     }
 
-    /**
-     * Remove the specified task from storage.
-     */
     public function destroy(Task $task)
     {
-        // Check if user is project manager
         if (!$task->project->isManager(Auth::user())) {
             abort(403, 'Only project managers can delete tasks.');
         }
 
         DB::beginTransaction();
         try {
-            // Log activity before delete
             ActivityLog::create([
                 'user_id' => Auth::id(),
                 'action' => 'deleted',
@@ -269,17 +235,88 @@ class TaskController extends Controller
                 'description' => 'Deleted task: ' . $task->name,
             ]);
 
+            $project = $task->project;
             $projectId = $task->project_id;
             $task->delete();
+
+            app(ProjectProgressService::class)->recordActualProgress($project);
 
             DB::commit();
 
             return redirect()->route('projects.show', $projectId)
                 ->with('success', 'Task deleted successfully!');
-
         } catch (\Exception $e) {
             DB::rollBack();
             return back()->withErrors(['error' => 'Failed to delete task.']);
         }
+    }
+
+    public function storeComment(Request $request, Task $task)
+    {
+        if (!$task->project->isMember(Auth::user())) {
+            abort(403, 'You do not have access to this task.');
+        }
+
+        $validated = $request->validate([
+            'comment' => 'required|string|max:2000',
+        ]);
+
+        TaskComment::create([
+            'task_id' => $task->id,
+            'user_id' => Auth::id(),
+            'comment' => $validated['comment'],
+        ]);
+
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'commented',
+            'entity_type' => 'comment',
+            'entity_id' => $task->id,
+            'description' => 'Added comment on task: ' . $task->name,
+        ]);
+
+        return back()->with('success', 'Comment added successfully.');
+    }
+
+    public function storeAttachment(Request $request, Task $task)
+    {
+        if (!$task->project->isMember(Auth::user())) {
+            abort(403, 'You do not have access to this task.');
+        }
+
+        $validated = $request->validate([
+            'attachment' => 'required|file|max:10240',
+        ]);
+
+        $file = $validated['attachment'];
+        $path = $file->store('task-attachments/' . $task->id, 'public');
+
+        $attachment = TaskAttachment::create([
+            'task_id' => $task->id,
+            'uploaded_by' => Auth::id(),
+            'file_name' => $file->getClientOriginalName(),
+            'file_path' => $path,
+            'file_size' => $file->getSize(),
+            'mime_type' => $file->getMimeType(),
+        ]);
+
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'created',
+            'entity_type' => 'attachment',
+            'entity_id' => $attachment->id,
+            'description' => 'Uploaded attachment for task: ' . $task->name,
+        ]);
+
+        return back()->with('success', 'Attachment uploaded successfully.');
+    }
+
+    public function downloadAttachment(Task $task, TaskAttachment $attachment)
+    {
+        if (!$task->project->isMember(Auth::user()) || $attachment->task_id !== $task->id) {
+            abort(403, 'You do not have access to this attachment.');
+        }
+
+        return Storage::disk('public')->download($attachment->file_path, $attachment->file_name);
     }
 }
