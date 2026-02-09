@@ -103,6 +103,7 @@ class TaskController extends Controller
                 'description' => 'Created task: ' . $task->name,
             ]);
 
+            app(ProjectProgressService::class)->syncPlannedProgress($project);
             app(ProjectProgressService::class)->recordActualProgress($project);
 
             DB::commit();
@@ -207,6 +208,7 @@ class TaskController extends Controller
                 ]);
             }
 
+            app(ProjectProgressService::class)->syncPlannedProgress($task->project);
             app(ProjectProgressService::class)->recordActualProgress($task->project);
 
             DB::commit();
@@ -239,6 +241,7 @@ class TaskController extends Controller
             $projectId = $task->project_id;
             $task->delete();
 
+            app(ProjectProgressService::class)->syncPlannedProgress($project);
             app(ProjectProgressService::class)->recordActualProgress($project);
 
             DB::commit();

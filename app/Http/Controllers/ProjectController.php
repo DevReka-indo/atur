@@ -60,7 +60,7 @@ class ProjectController extends Controller
             'joined_at' => now(),
         ]);
 
-        app(ProjectProgressService::class)->ensureBaselineAndPlanned($project);
+        app(ProjectProgressService::class)->syncPlannedProgress($project);
         app(ProjectProgressService::class)->recordActualProgress($project);
 
         return redirect()->route('projects.show', $project)
@@ -73,7 +73,7 @@ class ProjectController extends Controller
             abort(403, 'You do not have access to this project.');
         }
 
-        app(ProjectProgressService::class)->ensureBaselineAndPlanned($project);
+        app(ProjectProgressService::class)->syncPlannedProgress($project);
 
         $project->load([
             'workspace',
@@ -155,7 +155,7 @@ class ProjectController extends Controller
 
         $project->update($validated);
 
-        app(ProjectProgressService::class)->ensureBaselineAndPlanned($project);
+        app(ProjectProgressService::class)->syncPlannedProgress($project);
         app(ProjectProgressService::class)->recordActualProgress($project);
 
         return redirect()->route('projects.show', $project)
