@@ -5,6 +5,7 @@
 @section('content')
 @php
     $isManager = $task->project->isManager(Auth::user());
+    $canContribute = $task->project->canContribute(Auth::user());
 @endphp
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" x-data="{ showDeleteModal: false }">
     <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
@@ -13,7 +14,7 @@
             <h1 class="text-2xl font-bold text-gray-900">{{ $task->name }}</h1>
             <div class="flex gap-2 mt-2"><span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">{{ str($task->status)->replace('_',' ')->title() }}</span><span class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700">{{ ucfirst($task->priority) }}</span></div>
         </div>
-        <div class="flex gap-3"><a href="{{ route('tasks.edit', $task) }}" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>@if($isManager)<button @click="showDeleteModal = true" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"><i class="fa-solid fa-trash mr-2"></i>Delete</button>@endif</div>
+        <div class="flex gap-3">@if($canContribute)<a href="{{ route('tasks.edit', $task) }}" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>@endif@if($isManager)<button @click="showDeleteModal = true" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"><i class="fa-solid fa-trash mr-2"></i>Delete</button>@endif</div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -52,11 +53,13 @@
                         <p class="text-sm text-gray-500">No comments yet.</p>
                     @endforelse
                 </div>
+                @if($canContribute)
                 <form method="POST" action="{{ route('tasks.comments.store', $task) }}">
                     @csrf
                     <textarea name="comment" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Add a comment..." required></textarea>
                     <button type="submit" class="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium py-2 px-4 rounded-lg"><i class="fa-solid fa-paper-plane mr-2"></i>Post Comment</button>
                 </form>
+                @endif
             </div>
 
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -68,11 +71,13 @@
                         <p class="text-sm text-gray-500">No attachments uploaded.</p>
                     @endforelse
                 </div>
+                @if($canContribute)
                 <form method="POST" action="{{ route('tasks.attachments.store', $task) }}" enctype="multipart/form-data">
                     @csrf
                     <input name="attachment" type="file" class="block w-full text-sm text-gray-700 border border-gray-300 rounded-lg" required>
                     <button type="submit" class="mt-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium py-2 px-4 rounded-lg"><i class="fa-solid fa-upload mr-2"></i>Upload</button>
                 </form>
+                @endif
             </div>
         </div>
 

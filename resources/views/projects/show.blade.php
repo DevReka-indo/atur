@@ -10,6 +10,7 @@
     $overdueTasks = $project->tasks->filter(fn($task) => $task->isOverdue())->count();
     $groups = ['to_do' => 'To Do', 'in_progress' => 'In Progress', 'review' => 'Review', 'completed' => 'Completed'];
     $canManageMembers = $project->workspace->canManageMembers(Auth::user());
+    $canContribute = $project->canContribute(Auth::user());
 @endphp
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" x-data="{ tab: 'tasks', showDeleteModal: false, openStatus: {to_do: true, in_progress: true, review: true, completed: true} }">
     <div class="mb-6">
@@ -42,7 +43,9 @@
     <div class="border-b border-gray-200 mb-6"><nav class="-mb-px flex space-x-8"><button @click="tab = 'tasks'" :class="tab === 'tasks' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500'" class="py-3 px-1 border-b-2 text-sm font-medium">Tasks</button><button @click="tab = 'members'" :class="tab === 'members' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500'" class="py-3 px-1 border-b-2 text-sm font-medium">Members</button><button @click="tab = 'chart'" :class="tab === 'chart' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500'" class="py-3 px-1 border-b-2 text-sm font-medium">Progress Chart</button></nav></div>
 
     <div x-show="tab === 'tasks'" style="display: none;" class="space-y-4">
+        @if($canContribute)
         <a href="{{ route('tasks.create') }}?project_id={{ $project->id }}" class="inline-flex bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg"><i class="fa-solid fa-plus mr-2"></i>Create Task</a>
+        @endif
         @foreach ($groups as $statusKey => $statusLabel)
             @php $tasks = $project->tasks->where('status', $statusKey); @endphp
             <div class="bg-white rounded-lg border border-gray-200">
@@ -56,7 +59,7 @@
                                 <div class="flex flex-wrap gap-2 text-xs"><span class="px-2 py-1 rounded-full bg-blue-100 text-blue-800">{{ str($task->status)->replace('_', ' ')->title() }}</span><span class="px-2 py-1 rounded bg-gray-100 text-gray-700">{{ ucfirst($task->priority) }}</span><span class="text-gray-500">Weight: {{ $task->weight }}</span></div>
                                 <p class="text-sm {{ $task->isOverdue() ? 'text-red-600' : 'text-gray-500' }}">Due: {{ $task->due_date?->format('d M Y') ?? '-' }}</p>
                             </div>
-                            <div class="flex gap-3 text-sm"><a href="{{ route('tasks.show', $task) }}" class="text-indigo-600"><i class="fa-solid fa-eye mr-1"></i>View</a><a href="{{ route('tasks.edit', $task) }}" class="text-gray-700"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>@if($isManager)<form method="POST" action="{{ route('tasks.destroy', $task) }}" onsubmit="return confirm('Delete this task?')">@csrf @method('DELETE')<button class="text-red-600"><i class="fa-solid fa-trash mr-2"></i>Delete</button></form>@endif</div>
+                            <div class="flex gap-3 text-sm"><a href="{{ route('tasks.show', $task) }}" class="text-indigo-600"><i class="fa-solid fa-eye mr-1"></i>View</a>@if($canContribute)<a href="{{ route('tasks.edit', $task) }}" class="text-gray-700"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>@endif@if($isManager)<form method="POST" action="{{ route('tasks.destroy', $task) }}" onsubmit="return confirm('Delete this task?')">@csrf @method('DELETE')<button class="text-red-600"><i class="fa-solid fa-trash mr-2"></i>Delete</button></form>@endif</div>
                         </div>
                     @empty
                         <p class="text-sm text-gray-500">No tasks in this status.</p>

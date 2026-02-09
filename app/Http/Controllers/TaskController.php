@@ -41,12 +41,12 @@ class TaskController extends Controller
 
         if ($projectId) {
             $project = Project::findOrFail($projectId);
-            if (!$project->isMember(Auth::user())) {
-                abort(403, 'You must be a project member to create tasks.');
+            if (!$project->canContribute(Auth::user())) {
+                abort(403, 'Only manager/member can create tasks.');
             }
         }
 
-        $projects = Auth::user()->projects;
+        $projects = Auth::user()->projects()->wherePivotIn('role', ['manager', 'member'])->get();
         $assignees = $project ? $project->members : collect();
 
         return view('tasks.create', compact('projects', 'project', 'assignees'));
@@ -68,8 +68,8 @@ class TaskController extends Controller
         ]);
 
         $project = Project::findOrFail($validated['project_id']);
-        if (!$project->isMember(Auth::user())) {
-            abort(403, 'You must be a project member to create tasks.');
+        if (!$project->canContribute(Auth::user())) {
+            abort(403, 'Only manager/member can create tasks.');
         }
 
         DB::beginTransaction();
@@ -138,8 +138,8 @@ class TaskController extends Controller
 
     public function edit(Task $task)
     {
-        if (!$task->project->isMember(Auth::user())) {
-            abort(403, 'You do not have access to edit this task.');
+        if (!$task->project->canContribute(Auth::user())) {
+            abort(403, 'Viewer can only view this task.');
         }
 
         $project = $task->project;
@@ -150,8 +150,8 @@ class TaskController extends Controller
 
     public function update(Request $request, Task $task)
     {
-        if (!$task->project->isMember(Auth::user())) {
-            abort(403, 'You do not have access to update this task.');
+        if (!$task->project->canContribute(Auth::user())) {
+            abort(403, 'Viewer can only view this task.');
         }
 
         $validated = $request->validate([
@@ -256,8 +256,8 @@ class TaskController extends Controller
 
     public function storeComment(Request $request, Task $task)
     {
-        if (!$task->project->isMember(Auth::user())) {
-            abort(403, 'You do not have access to this task.');
+        if (!$task->project->canContribute(Auth::user())) {
+            abort(403, 'Viewer cannot add comment.');
         }
 
         $validated = $request->validate([
@@ -283,8 +283,8 @@ class TaskController extends Controller
 
     public function storeAttachment(Request $request, Task $task)
     {
-        if (!$task->project->isMember(Auth::user())) {
-            abort(403, 'You do not have access to this task.');
+        if (!$task->project->canContribute(Auth::user())) {
+            abort(403, 'Viewer cannot upload attachment.');
         }
 
         $validated = $request->validate([
