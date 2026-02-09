@@ -9,6 +9,11 @@ class TaskStatusHistory extends Model
 {
     use HasFactory;
 
+    /**
+     * Explicit table name because migration uses singular table name.
+     */
+    protected $table = 'task_status_history';
+
     public $timestamps = false;
 
     protected $fillable = [
