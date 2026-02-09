@@ -124,7 +124,7 @@
         @if (empty($chartData['labels']))
             <div class="p-10 text-center text-gray-500">No progress data available yet for chart visualization.</div>
         @else
-            <div class="h-96">
+            <div class="h-[32rem]">
                 <canvas id="projectProgressChart"></canvas>
             </div>
         @endif
@@ -145,29 +145,51 @@
         const chartEl = document.getElementById('projectProgressChart');
         if (!chartEl) return;
 
-        const data = @json($chartData);
+        const rawData = @json($chartData);
+
+        // Extend actual progress line to the end of timeline (forward-fill last known value)
+        const actualExtended = [];
+        let lastActual = null;
+        for (const value of rawData.actual) {
+            if (value !== null && value !== undefined) {
+                lastActual = value;
+                actualExtended.push(value);
+            } else {
+                actualExtended.push(lastActual);
+            }
+        }
+
+        const maxValue = Math.max(
+            100,
+            ...rawData.planned.filter(v => v !== null && v !== undefined),
+            ...actualExtended.filter(v => v !== null && v !== undefined)
+        );
 
         new Chart(chartEl, {
             type: 'line',
             data: {
-                labels: data.labels,
+                labels: rawData.labels,
                 datasets: [
                     {
                         label: 'Planned (%)',
-                        data: data.planned,
+                        data: rawData.planned,
                         borderColor: '#4f46e5',
                         backgroundColor: 'rgba(79, 70, 229, 0.2)',
                         borderWidth: 2,
-                        tension: 0.3,
+                        tension: 0.25,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
                         spanGaps: true,
                     },
                     {
                         label: 'Actual (%)',
-                        data: data.actual,
-                        borderColor: '#16a34a',
-                        backgroundColor: 'rgba(22, 163, 74, 0.2)',
+                        data: actualExtended,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.2)',
                         borderWidth: 2,
-                        tension: 0.3,
+                        tension: 0.25,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
                         spanGaps: true,
                     }
                 ]
@@ -176,11 +198,25 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
+                    x: {
+                        ticks: {
+                            maxRotation: 0,
+                            autoSkip: true,
+                            maxTicksLimit: 12
+                        },
+                        grid: {
+                            color: 'rgba(148, 163, 184, 0.2)'
+                        }
+                    },
                     y: {
                         min: 0,
-                        max: 100,
+                        max: Math.ceil(maxValue / 25) * 25 + 25,
                         ticks: {
+                            stepSize: 25,
                             callback: function(value) { return value + '%'; }
+                        },
+                        grid: {
+                            color: 'rgba(148, 163, 184, 0.25)'
                         }
                     }
                 },
