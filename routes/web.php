@@ -7,7 +7,6 @@ use App\Http\Controllers\WorkspaceController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\TaskController;
 
-
 Route::get('/', function () {
     return view('welcome');
 });
@@ -15,18 +14,21 @@ Route::get('/', function () {
 Route::middleware(['auth'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // Workspace routes
     Route::resource('workspaces', WorkspaceController::class);
+    Route::post('/workspaces/{workspace}/members', [WorkspaceController::class, 'addMember'])->name('workspaces.members.store');
+    Route::patch('/workspaces/{workspace}/members/{user}', [WorkspaceController::class, 'updateMemberRole'])->name('workspaces.members.update');
+    Route::delete('/workspaces/{workspace}/members/{user}', [WorkspaceController::class, 'removeMember'])->name('workspaces.members.destroy');
 
-    // Projects routes
     Route::resource('projects', ProjectController::class);
+    Route::post('/projects/{project}/members', [ProjectController::class, 'addMember'])->name('projects.members.store');
+    Route::patch('/projects/{project}/members/{user}', [ProjectController::class, 'updateMemberRole'])->name('projects.members.update');
+    Route::delete('/projects/{project}/members/{user}', [ProjectController::class, 'removeMember'])->name('projects.members.destroy');
 
-    // Tasks routes
     Route::resource('tasks', TaskController::class);
+    Route::post('/tasks/{task}/comments', [TaskController::class, 'storeComment'])->name('tasks.comments.store');
+    Route::post('/tasks/{task}/attachments', [TaskController::class, 'storeAttachment'])->name('tasks.attachments.store');
+    Route::get('/tasks/{task}/attachments/{attachment}/download', [TaskController::class, 'downloadAttachment'])->name('tasks.attachments.download');
 });
-// Route::get('/dashboard', function () {
-//     return view('dashboard');
-// })->middleware(['auth', 'verified'])->name('dashboard');
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
