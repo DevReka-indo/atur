@@ -26,7 +26,7 @@
             <thead class="bg-gray-50"><tr><th class="px-4 py-3"></th><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Task</th><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Project</th><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Priority</th><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Due Date</th><th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
             <tbody class="divide-y divide-gray-200">
                 @forelse ($tasks as $task)
-                    <tr x-show="(status === 'all' || status === '{{ $task->status }}') && (priority === 'all' || priority === '{{ $task->priority }}')" style="display:none;">
+                    <tr x-show="(status === 'all' || status === '{{ $task->status }}') && (priority === 'all' || priority === '{{ $task->priority }}')">
                         <td class="px-4 py-3"><input type="checkbox" disabled {{ $task->status === 'completed' ? 'checked' : '' }}></td>
                         <td class="px-4 py-3 font-medium {{ $task->status === 'completed' ? 'line-through text-gray-500' : 'text-gray-900' }}">{{ $task->name }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ $task->project?->name }}</td>
@@ -36,7 +36,7 @@
                         <td class="px-4 py-3 text-right"><a href="{{ route('tasks.show', $task) }}" class="text-indigo-600 text-sm mr-2">View</a><a href="{{ route('tasks.edit', $task) }}" class="text-gray-700 text-sm">Edit</a></td>
                     </tr>
                 @empty
-                    <tr><td colspan="7" class="px-4 py-10 text-center text-gray-500">No tasks assigned to you.</td></tr>
+                    <tr><td colspan="7" class="px-4 py-10 text-center text-gray-500">No tasks found for your projects yet.</td></tr>
                 @endforelse
             </tbody>
         </table>
