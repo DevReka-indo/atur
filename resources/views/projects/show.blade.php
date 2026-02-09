@@ -59,7 +59,19 @@
                                 <div class="flex flex-wrap gap-2 text-xs"><span class="px-2 py-1 rounded-full bg-blue-100 text-blue-800">{{ str($task->status)->replace('_', ' ')->title() }}</span><span class="px-2 py-1 rounded bg-gray-100 text-gray-700">{{ ucfirst($task->priority) }}</span><span class="text-gray-500">Weight: {{ $task->weight }}</span></div>
                                 <p class="text-sm {{ $task->isOverdue() ? 'text-red-600' : 'text-gray-500' }}">Due: {{ $task->due_date?->format('d M Y') ?? '-' }}</p>
                             </div>
-                            <div class="flex gap-3 text-sm"><a href="{{ route('tasks.show', $task) }}" class="text-indigo-600"><i class="fa-solid fa-eye mr-1"></i>View</a>@if($canContribute)<a href="{{ route('tasks.edit', $task) }}" class="text-gray-700"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>@endif@if($isManager)<form method="POST" action="{{ route('tasks.destroy', $task) }}" onsubmit="return confirm('Delete this task?')">@csrf @method('DELETE')<button class="text-red-600"><i class="fa-solid fa-trash mr-2"></i>Delete</button></form>@endif</div>
+                            <div class="flex gap-3 text-sm">
+                                <a href="{{ route('tasks.show', $task) }}" class="text-indigo-600"><i class="fa-solid fa-eye mr-1"></i>View</a>
+                                @if($canContribute)
+                                    <a href="{{ route('tasks.edit', $task) }}" class="text-gray-700"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>
+                                @endif
+                                @if($isManager)
+                                    <form method="POST" action="{{ route('tasks.destroy', $task) }}" onsubmit="return confirm('Delete this task?')">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button class="text-red-600"><i class="fa-solid fa-trash mr-2"></i>Delete</button>
+                                    </form>
+                                @endif
+                            </div>
                         </div>
                     @empty
                         <p class="text-sm text-gray-500">No tasks in this status.</p>
