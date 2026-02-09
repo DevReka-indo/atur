@@ -7,6 +7,7 @@ use App\Http\Controllers\WorkspaceController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\TaskController;
 
+
 Route::get('/', function () {
     return view('welcome');
 });
