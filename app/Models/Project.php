@@ -121,6 +121,26 @@ class Project extends Model
                     ->exists();
     }
 
+
+    public function roleForUser(User $user): ?string
+    {
+        $member = $this->members()
+            ->wherePivot('user_id', $user->id)
+            ->first();
+
+        return $member?->pivot?->role;
+    }
+
+    public function canContribute(User $user): bool
+    {
+        return in_array($this->roleForUser($user), ['manager', 'member'], true);
+    }
+
+    public function isViewer(User $user): bool
+    {
+        return $this->roleForUser($user) === 'viewer';
+    }
+
     /**
      * Calculate project progress berdasarkan task weights
      */
