@@ -17,9 +17,17 @@ class TaskController extends Controller
      */
     public function index()
     {
-        // Get tasks assigned to current user
-        $tasks = Auth::user()->assignedTasks()
+        $user = Auth::user();
+        $projectIds = $user->projects()->pluck('projects.id');
+
+        // Show tasks relevant to current user: assigned, created, or in joined projects
+        $tasks = Task::query()
             ->with(['project.workspace', 'assignee', 'statusWeight'])
+            ->where(function ($query) use ($user, $projectIds) {
+                $query->where('assignee_id', $user->id)
+                    ->orWhere('created_by', $user->id)
+                    ->orWhereIn('project_id', $projectIds);
+            })
             ->latest()
             ->get();
 
