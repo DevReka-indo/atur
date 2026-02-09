@@ -72,5 +72,6 @@
     <main class="py-8">
         @yield('content')
     </main>
+    @stack('scripts')
 </body>
 </html>

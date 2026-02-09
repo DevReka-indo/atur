@@ -69,11 +69,56 @@ class ProjectController extends Controller
             abort(403, 'You do not have access to this project.');
         }
 
-        $project->load(['workspace', 'workspace.members', 'members', 'tasks.assignee', 'tasks.statusWeight']);
+        $project->load([
+            'workspace',
+            'workspace.members',
+            'members',
+            'tasks.assignee',
+            'tasks.statusWeight',
+            'activeBaseline.plannedProgress',
+            'actualProgress',
+        ]);
         $progress = $project->calculateProgress();
         $availableMembers = $project->workspace->members->whereNotIn('id', $project->members->pluck('id'));
 
-        return view('projects.show', compact('project', 'progress', 'availableMembers'));
+        $baseline = $project->activeBaseline;
+        $plannedProgress = $baseline
+            ? $baseline->plannedProgress->sortBy('date')->values()
+            : collect();
+
+        $actualProgress = $project->actualProgress
+            ->when($baseline, fn ($collection) => $collection->where('baseline_id', $baseline->id))
+            ->sortBy('date')
+            ->values();
+
+        $chartData = [
+            'labels' => [],
+            'planned' => [],
+            'actual' => [],
+        ];
+
+        if ($plannedProgress->isNotEmpty() || $actualProgress->isNotEmpty()) {
+            $dateLabels = collect()
+                ->merge($plannedProgress->pluck('date')->map(fn ($date) => $date->format('Y-m-d')))
+                ->merge($actualProgress->pluck('date')->map(fn ($date) => $date->format('Y-m-d')))
+                ->unique()
+                ->sort()
+                ->values();
+
+            $plannedMap = $plannedProgress
+                ->mapWithKeys(fn ($item) => [$item->date->format('Y-m-d') => (float) $item->planned_cumulative_percentage]);
+
+            $actualMap = $actualProgress
+                ->mapWithKeys(fn ($item) => [$item->date->format('Y-m-d') => (float) $item->actual_cumulative_percentage]);
+
+            $chartData['labels'] = $dateLabels
+                ->map(fn ($date) => \Carbon\Carbon::parse($date)->format('d M Y'))
+                ->toArray();
+            $chartData['planned'] = $dateLabels->map(fn ($date) => $plannedMap[$date] ?? null)->toArray();
+            $chartData['actual'] = $dateLabels->map(fn ($date) => $actualMap[$date] ?? null)->toArray();
+        }
+
+        return view('projects.show', compact('project', 'progress', 'availableMembers', 'baseline', 'chartData'));
     }
 
     public function edit(Project $project)

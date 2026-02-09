@@ -115,10 +115,91 @@
         </div>
     </div>
 
-    <div x-show="tab === 'chart'" style="display: none;" class="bg-white rounded-lg border border-gray-200 p-10 text-center text-gray-500">S-Curve chart placeholder. Planned vs actual progress visualization will be added here.</div>
+    <div x-show="tab === 'chart'" style="display: none;" class="bg-white rounded-lg border border-gray-200 p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900">S-Curve: Planned vs Actual</h3>
+            <span class="text-sm text-gray-500">Baseline: {{ $baseline?->baseline_name ?? 'No active baseline' }}</span>
+        </div>
+
+        @if (empty($chartData['labels']))
+            <div class="p-10 text-center text-gray-500">No progress data available yet for chart visualization.</div>
+        @else
+            <div class="h-96">
+                <canvas id="projectProgressChart"></canvas>
+            </div>
+        @endif
+    </div>
 
     <div x-show="showDeleteModal" class="fixed inset-0 z-50 overflow-y-auto" style="display:none;">
         <div class="flex items-center justify-center min-h-screen px-4"><div class="fixed inset-0 bg-gray-500 bg-opacity-75"></div><div class="bg-white rounded-lg overflow-hidden shadow-xl sm:max-w-lg sm:w-full z-10"><div class="px-4 pt-5 pb-4 sm:p-6"><h3 class="text-lg font-medium text-gray-900">Confirm Delete</h3><p class="mt-2 text-sm text-gray-500">Are you sure you want to delete this project?</p></div><div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"><form method="POST" action="{{ route('projects.destroy', $project) }}">@csrf @method('DELETE')<button type="submit" class="rounded-md px-4 py-2 bg-red-600 text-white hover:bg-red-700 sm:ml-3"><i class="fa-solid fa-trash mr-2"></i>Delete</button></form><button @click="showDeleteModal = false" type="button" class="mt-3 sm:mt-0 rounded-md border border-gray-300 px-4 py-2 bg-white text-gray-700">Cancel</button></div></div></div>
     </div>
 </div>
 @endsection
+
+
+@push('scripts')
+@if (!empty($chartData['labels']))
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const chartEl = document.getElementById('projectProgressChart');
+        if (!chartEl) return;
+
+        const data = @json($chartData);
+
+        new Chart(chartEl, {
+            type: 'line',
+            data: {
+                labels: data.labels,
+                datasets: [
+                    {
+                        label: 'Planned (%)',
+                        data: data.planned,
+                        borderColor: '#4f46e5',
+                        backgroundColor: 'rgba(79, 70, 229, 0.2)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        spanGaps: true,
+                    },
+                    {
+                        label: 'Actual (%)',
+                        data: data.actual,
+                        borderColor: '#16a34a',
+                        backgroundColor: 'rgba(22, 163, 74, 0.2)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        spanGaps: true,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        min: 0,
+                        max: 100,
+                        ticks: {
+                            callback: function(value) { return value + '%'; }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                if (context.parsed.y === null) return `${context.dataset.label}: -`;
+                                return `${context.dataset.label}: ${context.parsed.y}%`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    });
+</script>
+@endif
+@endpush
