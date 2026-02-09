@@ -17,8 +17,8 @@
         </div>
         @if ($isOwner)
             <div class="flex gap-3">
-                <a href="{{ route('workspaces.edit', $workspace) }}" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg">Edit</a>
-                <button @click="showDeleteModal = true" class="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg">Delete</button>
+                <a href="{{ route('workspaces.edit', $workspace) }}" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>
+                <button @click="showDeleteModal = true" class="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg"><i class="fa-solid fa-trash mr-2"></i>Delete</button>
             </div>
         @endif
     </div>
@@ -33,7 +33,7 @@
     <div x-show="tab === 'projects'" style="display: none;">
         @if ($canCreateProject)
             <div class="mb-4">
-                <a href="{{ route('projects.create') }}?workspace_id={{ $workspace->id }}" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg">Create Project</a>
+                <a href="{{ route('projects.create') }}?workspace_id={{ $workspace->id }}" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg"><i class="fa-solid fa-plus mr-2"></i>Create Project</a>
             </div>
         @endif
         @if ($workspace->projects->isEmpty())
@@ -71,7 +71,7 @@
                     <option value="member">Member</option>
                     <option value="admin">Admin</option>
                 </select>
-                <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2">Add Member</button>
+                <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2"><i class="fa-solid fa-user-plus mr-2"></i>Add Member</button>
             </form>
         @endif
 
@@ -87,7 +87,7 @@
                     </div>
                     <div class="flex items-center gap-2">
                         @if($workspace->isOwner($member))
-                            <span class="px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-800">Owner</span>
+                            <span class="px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-800"> <i class="fa-solid fa-crown mr-1"></i>Owner</span>
                         @elseif($canManageMembers)
                             <form method="POST" action="{{ route('workspaces.members.update', [$workspace, $member]) }}" class="flex items-center gap-2">
                                 @csrf
@@ -96,12 +96,12 @@
                                     <option value="admin" {{ $member->pivot->role === 'admin' ? 'selected' : '' }}>Admin</option>
                                     <option value="member" {{ $member->pivot->role === 'member' ? 'selected' : '' }}>Member</option>
                                 </select>
-                                <button class="text-indigo-600 text-sm">Save</button>
+                                <button class="text-indigo-600 text-sm"><i class="fa-solid fa-floppy-disk mr-1"></i>Save</button>
                             </form>
                             <form method="POST" action="{{ route('workspaces.members.destroy', [$workspace, $member]) }}">
                                 @csrf
                                 @method('DELETE')
-                                <button class="text-red-600 text-sm">Remove</button>
+                                <button class="text-red-600 text-sm"><i class="fa-solid fa-user-minus mr-1"></i>Remove</button>
                             </form>
                         @else
                             <span class="px-2 py-1 text-xs rounded-full {{ $member->pivot->role === 'admin' ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-100 text-gray-800' }}">{{ ucfirst($member->pivot->role) }}</span>
@@ -119,7 +119,7 @@
             <div class="bg-white rounded-lg overflow-hidden shadow-xl sm:max-w-lg sm:w-full z-10">
                 <div class="px-4 pt-5 pb-4 sm:p-6"><h3 class="text-lg font-medium text-gray-900">Confirm Delete</h3><p class="mt-2 text-sm text-gray-500">Are you sure you want to delete this workspace?</p></div>
                 <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                    <form method="POST" action="{{ route('workspaces.destroy', $workspace) }}">@csrf @method('DELETE')<button type="submit" class="inline-flex justify-center rounded-md px-4 py-2 bg-red-600 text-white hover:bg-red-700 sm:ml-3">Delete</button></form>
+                    <form method="POST" action="{{ route('workspaces.destroy', $workspace) }}">@csrf @method('DELETE')<button type="submit" class="inline-flex justify-center rounded-md px-4 py-2 bg-red-600 text-white hover:bg-red-700 sm:ml-3"><i class="fa-solid fa-trash mr-2"></i>Delete</button></form>
                     <button @click="showDeleteModal = false" type="button" class="mt-3 sm:mt-0 inline-flex justify-center rounded-md border border-gray-300 px-4 py-2 bg-white text-gray-700 hover:bg-gray-50">Cancel</button>
                 </div>
             </div>
