@@ -176,8 +176,8 @@ class ProjectController extends Controller
 
     public function addMember(Request $request, Project $project)
     {
-        if (!$project->workspace->canManageMembers(Auth::user())) {
-            abort(403, 'Only workspace owner/admin can manage project members.');
+        if (!$project->isManager(Auth::user())) {
+            abort(403, 'Only project manager can manage project members.');
         }
 
         $validated = $request->validate([
@@ -203,8 +203,8 @@ class ProjectController extends Controller
 
     public function updateMemberRole(Request $request, Project $project, User $user)
     {
-        if (!$project->workspace->canManageMembers(Auth::user())) {
-            abort(403, 'Only workspace owner/admin can manage project members.');
+        if (!$project->isManager(Auth::user())) {
+            abort(403, 'Only project manager can manage project members.');
         }
 
         $validated = $request->validate([
@@ -218,8 +218,8 @@ class ProjectController extends Controller
 
     public function removeMember(Project $project, User $user)
     {
-        if (!$project->workspace->canManageMembers(Auth::user())) {
-            abort(403, 'Only workspace owner/admin can manage project members.');
+        if (!$project->isManager(Auth::user())) {
+            abort(403, 'Only project manager can manage project members.');
         }
 
         if ((int) $project->created_by === (int) $user->id) {

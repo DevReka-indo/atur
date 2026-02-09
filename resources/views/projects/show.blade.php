@@ -9,7 +9,7 @@
     $completedTasks = $project->tasks->where('status', 'completed')->count();
     $overdueTasks = $project->tasks->filter(fn($task) => $task->isOverdue())->count();
     $groups = ['to_do' => 'To Do', 'in_progress' => 'In Progress', 'review' => 'Review', 'completed' => 'Completed'];
-    $canManageMembers = $project->workspace->canManageMembers(Auth::user());
+    $canManageMembers = $project->isManager(Auth::user());
     $canContribute = $project->canContribute(Auth::user());
 @endphp
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" x-data="{ tab: 'tasks', showDeleteModal: false, openStatus: {to_do: true, in_progress: true, review: true, completed: true} }">
