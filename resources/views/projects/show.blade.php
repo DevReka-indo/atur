@@ -9,6 +9,7 @@
     $completedTasks = $project->tasks->where('status', 'completed')->count();
     $overdueTasks = $project->tasks->filter(fn($task) => $task->isOverdue())->count();
     $groups = ['to_do' => 'To Do', 'in_progress' => 'In Progress', 'review' => 'Review', 'completed' => 'Completed'];
+    $canManageMembers = $project->workspace->canManageMembers(Auth::user());
 @endphp
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" x-data="{ tab: 'tasks', showDeleteModal: false, openStatus: {to_do: true, in_progress: true, review: true, completed: true} }">
     <div class="mb-6">
@@ -66,8 +67,52 @@
     </div>
 
     <div x-show="tab === 'members'" style="display: none;" class="bg-white rounded-lg border border-gray-200 p-6">
-        <div class="flex items-center justify-between mb-4"><h3 class="font-semibold">Project Members</h3>@if($isManager)<button class="bg-gray-100 text-gray-700 px-3 py-2 rounded-lg text-sm">Add Member (Soon)</button>@endif</div>
-        <div class="space-y-3">@foreach($project->members as $member)<div class="flex items-center justify-between border border-gray-200 rounded-lg p-3"><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-semibold">{{ strtoupper(substr($member->name,0,1)) }}</div><div><p class="font-medium">{{ $member->name }}</p><p class="text-xs text-gray-500">{{ $member->job_title ?: '-' }}</p></div></div><span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800">{{ ucfirst($member->pivot->role) }}</span></div>@endforeach</div>
+        <div class="flex items-center justify-between mb-4"><h3 class="font-semibold">Project Members</h3></div>
+        @if($canManageMembers)
+            <form method="POST" action="{{ route('projects.members.store', $project) }}" class="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                @csrf
+                <select name="user_id" class="px-3 py-2 border border-gray-300 rounded-lg" required>
+                    <option value="">Select workspace member</option>
+                    @foreach($availableMembers as $candidate)
+                        <option value="{{ $candidate->id }}">{{ $candidate->name }}</option>
+                    @endforeach
+                </select>
+                <select name="role" class="px-3 py-2 border border-gray-300 rounded-lg" required>
+                    <option value="member">Member</option>
+                    <option value="manager">Manager</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+                <button class="bg-indigo-600 text-white rounded-lg px-4 py-2">Add Member</button>
+            </form>
+        @endif
+        <div class="space-y-3">
+            @foreach($project->members as $member)
+            <div class="flex items-center justify-between border border-gray-200 rounded-lg p-3">
+                <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-semibold">{{ strtoupper(substr($member->name,0,1)) }}</div><div><p class="font-medium">{{ $member->name }}</p><p class="text-xs text-gray-500">{{ $member->job_title ?: '-' }}</p></div></div>
+                @if($canManageMembers)
+                <div class="flex items-center gap-2">
+                    <form method="POST" action="{{ route('projects.members.update', [$project, $member]) }}" class="flex items-center gap-2">
+                        @csrf
+                        @method('PATCH')
+                        <select name="role" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                            <option value="manager" {{ $member->pivot->role === 'manager' ? 'selected' : '' }}>Manager</option>
+                            <option value="member" {{ $member->pivot->role === 'member' ? 'selected' : '' }}>Member</option>
+                            <option value="viewer" {{ $member->pivot->role === 'viewer' ? 'selected' : '' }}>Viewer</option>
+                        </select>
+                        <button class="text-indigo-600 text-sm">Save</button>
+                    </form>
+                    <form method="POST" action="{{ route('projects.members.destroy', [$project, $member]) }}">
+                        @csrf
+                        @method('DELETE')
+                        <button class="text-red-600 text-sm">Remove</button>
+                    </form>
+                </div>
+                @else
+                <span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800">{{ ucfirst($member->pivot->role) }}</span>
+                @endif
+            </div>
+            @endforeach
+        </div>
     </div>
 
     <div x-show="tab === 'chart'" style="display: none;" class="bg-white rounded-lg border border-gray-200 p-10 text-center text-gray-500">S-Curve chart placeholder. Planned vs actual progress visualization will be added here.</div>

@@ -3,18 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Models\User;
 use App\Models\Workspace;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class ProjectController extends Controller
 {
-    /**
-     * Display a listing of projects.
-     */
     public function index()
     {
-        // Get projects where user is member
         $projects = Auth::user()->projects()
             ->with(['workspace', 'members'])
             ->withCount('tasks')
@@ -24,20 +21,13 @@ class ProjectController extends Controller
         return view('projects.index', compact('projects'));
     }
 
-    /**
-     * Show the form for creating a new project.
-     */
     public function create()
     {
-        // Get workspaces where user is member
         $workspaces = Auth::user()->workspaces;
 
         return view('projects.create', compact('workspaces'));
     }
 
-    /**
-     * Store a newly created project in storage.
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -49,10 +39,9 @@ class ProjectController extends Controller
             'status' => 'required|in:planning,active,on_hold,completed,cancelled',
         ]);
 
-        // Check if user is workspace member
         $workspace = Workspace::findOrFail($validated['workspace_id']);
-        if (!$workspace->isMember(Auth::user())) {
-            abort(403, 'You must be a workspace member to create projects.');
+        if (!$workspace->canCreateProject(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can create projects.');
         }
 
         $project = Project::create([
@@ -65,7 +54,6 @@ class ProjectController extends Controller
             'created_by' => Auth::id(),
         ]);
 
-        // Add creator as project manager
         $project->members()->attach(Auth::id(), [
             'role' => 'manager',
             'joined_at' => now(),
@@ -75,32 +63,23 @@ class ProjectController extends Controller
             ->with('success', 'Project created successfully!');
     }
 
-    /**
-     * Display the specified project.
-     */
     public function show(Project $project)
     {
-        // Check if user is member
         if (!$project->isMember(Auth::user())) {
             abort(403, 'You do not have access to this project.');
         }
 
-        $project->load(['workspace', 'members', 'tasks.assignee', 'tasks.statusWeight']);
-
-        // Calculate project progress
+        $project->load(['workspace', 'workspace.members', 'members', 'tasks.assignee', 'tasks.statusWeight']);
         $progress = $project->calculateProgress();
+        $availableMembers = $project->workspace->members->whereNotIn('id', $project->members->pluck('id'));
 
-        return view('projects.show', compact('project', 'progress'));
+        return view('projects.show', compact('project', 'progress', 'availableMembers'));
     }
 
-    /**
-     * Show the form for editing the specified project.
-     */
     public function edit(Project $project)
     {
-        // Check if user is manager
-        if (!$project->isManager(Auth::user())) {
-            abort(403, 'Only project managers can edit this project.');
+        if (!$project->workspace->canCreateProject(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can edit this project.');
         }
 
         $workspaces = Auth::user()->workspaces;
@@ -108,14 +87,10 @@ class ProjectController extends Controller
         return view('projects.edit', compact('project', 'workspaces'));
     }
 
-    /**
-     * Update the specified project in storage.
-     */
     public function update(Request $request, Project $project)
     {
-        // Check if user is manager
-        if (!$project->isManager(Auth::user())) {
-            abort(403, 'Only project managers can update this project.');
+        if (!$project->workspace->canCreateProject(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can update this project.');
         }
 
         $validated = $request->validate([
@@ -133,19 +108,72 @@ class ProjectController extends Controller
             ->with('success', 'Project updated successfully!');
     }
 
-    /**
-     * Remove the specified project from storage.
-     */
     public function destroy(Project $project)
     {
-        // Check if user is manager
-        if (!$project->isManager(Auth::user())) {
-            abort(403, 'Only project managers can delete this project.');
+        if (!$project->workspace->canManageSettings(Auth::user())) {
+            abort(403, 'Only workspace owner can delete this project.');
         }
 
         $project->delete();
 
         return redirect()->route('projects.index')
             ->with('success', 'Project deleted successfully!');
+    }
+
+    public function addMember(Request $request, Project $project)
+    {
+        if (!$project->workspace->canManageMembers(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can manage project members.');
+        }
+
+        $validated = $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'role' => 'required|in:manager,member,viewer',
+        ]);
+
+        if (!$project->workspace->members()->where('user_id', $validated['user_id'])->exists()) {
+            return back()->withErrors(['user_id' => 'User must join workspace first.']);
+        }
+
+        if ($project->members()->where('user_id', $validated['user_id'])->exists()) {
+            return back()->withErrors(['user_id' => 'User already in this project.']);
+        }
+
+        $project->members()->attach($validated['user_id'], [
+            'role' => $validated['role'],
+            'joined_at' => now(),
+        ]);
+
+        return back()->with('success', 'Project member added.');
+    }
+
+    public function updateMemberRole(Request $request, Project $project, User $user)
+    {
+        if (!$project->workspace->canManageMembers(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can manage project members.');
+        }
+
+        $validated = $request->validate([
+            'role' => 'required|in:manager,member,viewer',
+        ]);
+
+        $project->members()->updateExistingPivot($user->id, ['role' => $validated['role']]);
+
+        return back()->with('success', 'Project member role updated.');
+    }
+
+    public function removeMember(Project $project, User $user)
+    {
+        if (!$project->workspace->canManageMembers(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can manage project members.');
+        }
+
+        if ((int) $project->created_by === (int) $user->id) {
+            return back()->withErrors(['member' => 'Project creator cannot be removed.']);
+        }
+
+        $project->members()->detach($user->id);
+
+        return back()->with('success', 'Project member removed.');
     }
 }
