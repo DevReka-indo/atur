@@ -8,6 +8,7 @@ use App\Models\Task;
 use App\Models\TaskAttachment;
 use App\Models\TaskComment;
 use App\Models\TaskStatusHistory;
+use App\Services\ProjectProgressService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -101,6 +102,8 @@ class TaskController extends Controller
                 'entity_id' => $task->id,
                 'description' => 'Created task: ' . $task->name,
             ]);
+
+            app(ProjectProgressService::class)->recordActualProgress($project);
 
             DB::commit();
 
@@ -204,6 +207,8 @@ class TaskController extends Controller
                 ]);
             }
 
+            app(ProjectProgressService::class)->recordActualProgress($task->project);
+
             DB::commit();
 
             return redirect()->route('tasks.show', $task)
@@ -230,8 +235,11 @@ class TaskController extends Controller
                 'description' => 'Deleted task: ' . $task->name,
             ]);
 
+            $project = $task->project;
             $projectId = $task->project_id;
             $task->delete();
+
+            app(ProjectProgressService::class)->recordActualProgress($project);
 
             DB::commit();
 
