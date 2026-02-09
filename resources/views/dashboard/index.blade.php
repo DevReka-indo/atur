@@ -15,10 +15,10 @@
 @endphp
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-blue-600">📁 Total Workspaces</p><p class="text-3xl font-bold mt-2">{{ $stats['total_workspaces'] }}</p></div>
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-green-600">💼 Total Projects</p><p class="text-3xl font-bold mt-2">{{ $stats['total_projects'] }}</p></div>
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-yellow-600">📋 Assigned Tasks</p><p class="text-3xl font-bold mt-2">{{ $stats['assigned_tasks'] }}</p></div>
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-purple-600">✅ Completed Tasks</p><p class="text-3xl font-bold mt-2">{{ $stats['completed_tasks'] }}</p></div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-blue-600 inline-flex items-center"><i class="fa-solid fa-folder-tree mr-2"></i>Total Workspaces</p><p class="text-3xl font-bold mt-2">{{ $stats['total_workspaces'] }}</p></div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-green-600 inline-flex items-center"><i class="fa-solid fa-diagram-project mr-2"></i>Total Projects</p><p class="text-3xl font-bold mt-2">{{ $stats['total_projects'] }}</p></div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-yellow-600 inline-flex items-center"><i class="fa-solid fa-list-check mr-2"></i>Assigned Tasks</p><p class="text-3xl font-bold mt-2">{{ $stats['assigned_tasks'] }}</p></div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6"><p class="text-sm text-purple-600 inline-flex items-center"><i class="fa-solid fa-circle-check mr-2"></i>Completed Tasks</p><p class="text-3xl font-bold mt-2">{{ $stats['completed_tasks'] }}</p></div>
     </div>
 
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -44,7 +44,7 @@
                                 <td class="px-4 py-3 text-sm text-gray-600">{{ $task->project?->name }}</td>
                                 <td class="px-4 py-3"><span class="px-2 py-1 text-xs font-medium rounded-full {{ $statusClasses[$task->status] ?? 'bg-gray-100 text-gray-800' }}">{{ str($task->status)->replace('_', ' ')->title() }}</span></td>
                                 <td class="px-4 py-3 text-sm text-gray-600">{{ $task->due_date?->format('d M Y') ?? '-' }}</td>
-                                <td class="px-4 py-3 text-right"><a href="{{ route('tasks.show', $task) }}" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">View</a></td>
+                                <td class="px-4 py-3 text-right"><a href="{{ route('tasks.show', $task) }}" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium"><i class="fa-solid fa-eye mr-1"></i>View</a></td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -74,9 +74,9 @@
     </div>
 
     <div class="fixed bottom-6 right-6 flex flex-col gap-3">
-        <a href="{{ route('workspaces.create') }}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow">Create Workspace</a>
-        <a href="{{ route('projects.create') }}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow">Create Project</a>
-        <a href="{{ route('tasks.create') }}" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow">Create Task</a>
+        <a href="{{ route('workspaces.create') }}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow inline-flex items-center"><i class="fa-solid fa-plus mr-2"></i>Create Workspace</a>
+        <a href="{{ route('projects.create') }}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow inline-flex items-center"><i class="fa-solid fa-plus mr-2"></i>Create Project</a>
+        <a href="{{ route('tasks.create') }}" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow inline-flex items-center"><i class="fa-solid fa-plus mr-2"></i>Create Task</a>
     </div>
 </div>
 @endsection
