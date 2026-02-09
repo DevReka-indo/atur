@@ -1,0 +1,89 @@
+@extends('layouts.app')
+
+@section('title', $workspace->name)
+
+@section('content')
+@php
+    $isAdmin = $workspace->isAdmin(Auth::user());
+@endphp
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" x-data="{ tab: 'projects', showDeleteModal: false }">
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">{{ $workspace->name }}</h1>
+            <p class="text-gray-600 mt-1">{{ $workspace->description ?: 'No description provided.' }}</p>
+        </div>
+        @if ($isAdmin)
+            <div class="flex gap-3">
+                <a href="{{ route('workspaces.edit', $workspace) }}" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg">Edit</a>
+                <button @click="showDeleteModal = true" class="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg">Delete</button>
+            </div>
+        @endif
+    </div>
+
+    <div class="border-b border-gray-200 mb-6">
+        <nav class="-mb-px flex space-x-8">
+            <button @click="tab = 'projects'" :class="tab === 'projects' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500'" class="py-3 px-1 border-b-2 font-medium text-sm">Projects</button>
+            <button @click="tab = 'members'" :class="tab === 'members' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500'" class="py-3 px-1 border-b-2 font-medium text-sm">Members</button>
+        </nav>
+    </div>
+
+    <div x-show="tab === 'projects'" style="display: none;">
+        <div class="mb-4">
+            <a href="{{ route('projects.create') }}?workspace_id={{ $workspace->id }}" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg">Create Project</a>
+        </div>
+        @if ($workspace->projects->isEmpty())
+            <div class="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-500">No projects in this workspace yet.</div>
+        @else
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50"><tr><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tasks</th><th class="px-4 py-3"></th></tr></thead>
+                    <tbody class="divide-y divide-gray-200">
+                        @foreach ($workspace->projects as $project)
+                            <tr>
+                                <td class="px-4 py-3 font-medium text-gray-900">{{ $project->name }}</td>
+                                <td class="px-4 py-3"><span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">{{ str($project->status)->replace('_', ' ')->title() }}</span></td>
+                                <td class="px-4 py-3 text-sm text-gray-600">{{ $project->tasks()->count() }}</td>
+                                <td class="px-4 py-3 text-right"><a href="{{ route('projects.show', $project) }}" class="text-indigo-600 hover:text-indigo-800 text-sm">View</a></td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        @endif
+    </div>
+
+    <div x-show="tab === 'members'" style="display: none;">
+        @if ($workspace->members->isEmpty())
+            <div class="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-500">No members found.</div>
+        @else
+            <div class="space-y-3">
+                @foreach ($workspace->members as $member)
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="h-10 w-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-semibold">{{ strtoupper(substr($member->name, 0, 1)) }}</div>
+                            <div>
+                                <p class="font-medium text-gray-900">{{ $member->name }}</p>
+                                <p class="text-sm text-gray-500">{{ $member->job_title ?: 'No title' }}</p>
+                            </div>
+                        </div>
+                        <span class="px-2 py-1 text-xs rounded-full {{ $member->pivot->role === 'admin' ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-100 text-gray-800' }}">{{ ucfirst($member->pivot->role) }}</span>
+                    </div>
+                @endforeach
+            </div>
+        @endif
+    </div>
+
+    <div x-show="showDeleteModal" class="fixed inset-0 z-50 overflow-y-auto" style="display: none;">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75"></div>
+            <div class="bg-white rounded-lg overflow-hidden shadow-xl sm:max-w-lg sm:w-full z-10">
+                <div class="px-4 pt-5 pb-4 sm:p-6"><h3 class="text-lg font-medium text-gray-900">Confirm Delete</h3><p class="mt-2 text-sm text-gray-500">Are you sure you want to delete this workspace?</p></div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <form method="POST" action="{{ route('workspaces.destroy', $workspace) }}">@csrf @method('DELETE')<button type="submit" class="inline-flex justify-center rounded-md px-4 py-2 bg-red-600 text-white hover:bg-red-700 sm:ml-3">Delete</button></form>
+                    <button @click="showDeleteModal = false" type="button" class="mt-3 sm:mt-0 inline-flex justify-center rounded-md border border-gray-300 px-4 py-2 bg-white text-gray-700 hover:bg-gray-50">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+@endsection
