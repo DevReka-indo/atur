@@ -3,17 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\Workspace;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class WorkspaceController extends Controller
 {
-    /**
-     * Display a listing of workspaces.
-     */
     public function index()
     {
-        // Get workspaces where user is member
         $workspaces = Auth::user()->workspaces()
             ->withCount('projects')
             ->withCount('members')
@@ -23,17 +20,11 @@ class WorkspaceController extends Controller
         return view('workspaces.index', compact('workspaces'));
     }
 
-    /**
-     * Show the form for creating a new workspace.
-     */
     public function create()
     {
         return view('workspaces.create');
     }
 
-    /**
-     * Store a newly created workspace in storage.
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -47,9 +38,8 @@ class WorkspaceController extends Controller
             'created_by' => Auth::id(),
         ]);
 
-        // Add creator as admin member
         $workspace->members()->attach(Auth::id(), [
-            'role' => 'admin',
+            'role' => Workspace::ROLE_OWNER,
             'joined_at' => now(),
         ]);
 
@@ -57,42 +47,35 @@ class WorkspaceController extends Controller
             ->with('success', 'Workspace created successfully!');
     }
 
-    /**
-     * Display the specified workspace.
-     */
     public function show(Workspace $workspace)
     {
-        // Check if user is member
-        if (!$workspace->isMember(Auth::user())) {
+        $user = Auth::user();
+        if (!$workspace->isMember($user)) {
             abort(403, 'You do not have access to this workspace.');
         }
 
         $workspace->load(['projects', 'members']);
+        $availableUsers = User::whereNotIn('id', $workspace->members->pluck('id'))
+            ->orderBy('name')
+            ->get();
+        $currentRole = $workspace->roleForUser($user);
 
-        return view('workspaces.show', compact('workspace'));
+        return view('workspaces.show', compact('workspace', 'availableUsers', 'currentRole'));
     }
 
-    /**
-     * Show the form for editing the specified workspace.
-     */
     public function edit(Workspace $workspace)
     {
-        // Check if user is admin
-        if (!$workspace->isAdmin(Auth::user())) {
-            abort(403, 'Only workspace admins can edit this workspace.');
+        if (!$workspace->canManageSettings(Auth::user())) {
+            abort(403, 'Only workspace owner can edit this workspace.');
         }
 
         return view('workspaces.edit', compact('workspace'));
     }
 
-    /**
-     * Update the specified workspace in storage.
-     */
     public function update(Request $request, Workspace $workspace)
     {
-        // Check if user is admin
-        if (!$workspace->isAdmin(Auth::user())) {
-            abort(403, 'Only workspace admins can update this workspace.');
+        if (!$workspace->canManageSettings(Auth::user())) {
+            abort(403, 'Only workspace owner can update this workspace.');
         }
 
         $validated = $request->validate([
@@ -106,19 +89,72 @@ class WorkspaceController extends Controller
             ->with('success', 'Workspace updated successfully!');
     }
 
-    /**
-     * Remove the specified workspace from storage.
-     */
     public function destroy(Workspace $workspace)
     {
-        // Check if user is admin
-        if (!$workspace->isAdmin(Auth::user())) {
-            abort(403, 'Only workspace admins can delete this workspace.');
+        if (!$workspace->canManageSettings(Auth::user())) {
+            abort(403, 'Only workspace owner can delete this workspace.');
         }
 
         $workspace->delete();
 
         return redirect()->route('workspaces.index')
             ->with('success', 'Workspace deleted successfully!');
+    }
+
+    public function addMember(Request $request, Workspace $workspace)
+    {
+        if (!$workspace->canManageMembers(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can add members.');
+        }
+
+        $validated = $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'role' => 'required|in:admin,member',
+        ]);
+
+        if ($workspace->members()->where('user_id', $validated['user_id'])->exists()) {
+            return back()->withErrors(['user_id' => 'User already in this workspace.']);
+        }
+
+        $workspace->members()->attach($validated['user_id'], [
+            'role' => $validated['role'],
+            'joined_at' => now(),
+        ]);
+
+        return back()->with('success', 'Member added successfully.');
+    }
+
+    public function updateMemberRole(Request $request, Workspace $workspace, User $user)
+    {
+        if (!$workspace->canManageMembers(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can update members.');
+        }
+
+        if ($workspace->isOwner($user)) {
+            return back()->withErrors(['role' => 'Owner role cannot be changed.']);
+        }
+
+        $validated = $request->validate([
+            'role' => 'required|in:admin,member',
+        ]);
+
+        $workspace->members()->updateExistingPivot($user->id, ['role' => $validated['role']]);
+
+        return back()->with('success', 'Member role updated.');
+    }
+
+    public function removeMember(Workspace $workspace, User $user)
+    {
+        if (!$workspace->canManageMembers(Auth::user())) {
+            abort(403, 'Only workspace owner/admin can remove members.');
+        }
+
+        if ($workspace->isOwner($user)) {
+            return back()->withErrors(['member' => 'Owner cannot be removed.']);
+        }
+
+        $workspace->members()->detach($user->id);
+
+        return back()->with('success', 'Member removed.');
     }
 }

@@ -52,9 +52,10 @@
                         <p class="text-sm text-gray-500">No comments yet.</p>
                     @endforelse
                 </div>
-                <form>
-                    <textarea rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Add a comment..."></textarea>
-                    <button type="button" class="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium py-2 px-4 rounded-lg">Post Comment (Soon)</button>
+                <form method="POST" action="{{ route('tasks.comments.store', $task) }}">
+                    @csrf
+                    <textarea name="comment" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Add a comment..." required></textarea>
+                    <button type="submit" class="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium py-2 px-4 rounded-lg">Post Comment</button>
                 </form>
             </div>
 
@@ -62,14 +63,15 @@
                 <h2 class="text-lg font-semibold mb-4">Attachments</h2>
                 <div class="space-y-3 mb-4">
                     @forelse($task->attachments as $file)
-                        <div class="flex items-center justify-between border border-gray-200 rounded-lg p-3"><div><p class="text-sm font-medium">📎 {{ $file->file_name }}</p><p class="text-xs text-gray-500">{{ $file->human_file_size }}</p></div><a href="{{ $file->file_url }}" class="text-indigo-600 text-sm">Download</a></div>
+                        <div class="flex items-center justify-between border border-gray-200 rounded-lg p-3"><div><p class="text-sm font-medium">📎 {{ $file->file_name }}</p><p class="text-xs text-gray-500">{{ $file->human_file_size }}</p></div><a href="{{ route('tasks.attachments.download', [$task, $file]) }}" class="text-indigo-600 text-sm">Download</a></div>
                     @empty
                         <p class="text-sm text-gray-500">No attachments uploaded.</p>
                     @endforelse
                 </div>
-                <form>
-                    <input type="file" class="block w-full text-sm text-gray-700 border border-gray-300 rounded-lg">
-                    <button type="button" class="mt-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium py-2 px-4 rounded-lg">Upload (Soon)</button>
+                <form method="POST" action="{{ route('tasks.attachments.store', $task) }}" enctype="multipart/form-data">
+                    @csrf
+                    <input name="attachment" type="file" class="block w-full text-sm text-gray-700 border border-gray-300 rounded-lg" required>
+                    <button type="submit" class="mt-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium py-2 px-4 rounded-lg">Upload</button>
                 </form>
             </div>
         </div>
