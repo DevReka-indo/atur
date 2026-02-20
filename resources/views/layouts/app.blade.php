@@ -23,7 +23,6 @@
                         </span>
                     </a>
                 </div>
-            </div>
 
                 <nav class="px-4 py-6 space-y-2">
                     <a href="{{ route('dashboard') }}" class="group flex items-center gap-3 px-4 py-3 rounded-xl transition {{ request()->routeIs('dashboard') ? 'bg-indigo-500/20 text-indigo-200 border border-indigo-400/40' : 'hover:bg-slate-800/90 text-slate-300' }}">
@@ -49,19 +48,6 @@
                         <p class="text-xs uppercase tracking-wide text-indigo-200/80">Quick Tip</p>
                         <p class="mt-2 text-sm text-slate-200">Pantau progress harian dan update task agar timeline project tetap sehat.</p>
                     </div>
-                </div>
-            </div>
-
-            <div class="p-4 border-t border-slate-800">
-                <div class="rounded-xl bg-slate-800/80 p-4">
-                    <p class="text-sm font-semibold text-white">{{ Auth::user()->name }}</p>
-                    <p class="text-xs text-slate-400">{{ Auth::user()->email }}</p>
-                    <form method="POST" action="{{ route('logout') }}" class="mt-3">
-                        @csrf
-                        <button type="submit" class="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-slate-700 hover:bg-slate-600 px-3 py-2 text-sm text-white transition">
-                            <i class="fa-solid fa-right-from-bracket"></i> Logout
-                        </button>
-                    </form>
                 </div>
             </div>
         </aside>
