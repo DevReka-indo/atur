@@ -51,7 +51,7 @@
                 </div>
             </div>
 
-            <div class="p-4 border-t border-slate-800">
+            {{-- <div class="p-4 border-t border-slate-800">
                 <div class="rounded-xl bg-slate-800/80 p-4">
                     <p class="text-sm font-semibold text-white">{{ Auth::user()->name }}</p>
                     <p class="text-xs text-slate-400">{{ Auth::user()->email }}</p>
@@ -62,7 +62,7 @@
                         </button>
                     </form>
                 </div>
-            </div>
+            </div> --}}
         </aside>
 
         <div class="flex-1">
