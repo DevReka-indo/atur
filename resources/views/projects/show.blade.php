@@ -14,7 +14,13 @@
 @endphp
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" x-data="{ tab: 'tasks', showDeleteModal: false, openStatus: {to_do: true, in_progress: true, review: true, completed: true} }">
     <div class="mb-6">
-        <p class="text-sm text-gray-500 mb-2">{{ $project->workspace->name }} > {{ $project->name }}</p>
+        <nav class="text-sm text-gray-500 mb-2 flex items-center gap-2" aria-label="Breadcrumb">
+            <a href="{{ route('workspaces.show', $project->workspace) }}" class="hover:text-indigo-600 hover:underline">
+                {{ $project->workspace->name }}
+            </a>
+            <span aria-hidden="true">/</span>
+            <span class="text-gray-700" aria-current="page">{{ $project->name }}</span>
+        </nav>
         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-gray-900">{{ $project->name }}</h1>
