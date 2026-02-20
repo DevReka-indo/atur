@@ -23,6 +23,7 @@
                         </span>
                     </a>
                 </div>
+            </div>
 
                 <nav class="px-4 py-6 space-y-2">
                     <a href="{{ route('dashboard') }}" class="group flex items-center gap-3 px-4 py-3 rounded-xl transition {{ request()->routeIs('dashboard') ? 'bg-indigo-500/20 text-indigo-200 border border-indigo-400/40' : 'hover:bg-slate-800/90 text-slate-300' }}">
