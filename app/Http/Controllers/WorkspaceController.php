@@ -54,7 +54,16 @@ class WorkspaceController extends Controller
             abort(403, 'You do not have access to this workspace.');
         }
 
-        $workspace->load(['projects', 'members']);
+        $workspace->load([
+            'projects' => function ($query) {
+                $query->withCount('tasks')
+                    ->with([
+                        'tasks.statusWeight',
+                        'members:id,name',
+                    ]);
+            },
+            'members',
+        ]);
         $availableUsers = User::whereNotIn('id', $workspace->members->pluck('id'))
             ->orderBy('name')
             ->get();
@@ -134,6 +143,10 @@ class WorkspaceController extends Controller
             return back()->withErrors(['role' => 'Owner role cannot be changed.']);
         }
 
+        if ((int) Auth::id() === (int) $user->id) {
+            return back()->withErrors(['role' => 'You cannot change your own role.']);
+        }
+
         $validated = $request->validate([
             'role' => 'required|in:admin,member',
         ]);
@@ -151,6 +164,10 @@ class WorkspaceController extends Controller
 
         if ($workspace->isOwner($user)) {
             return back()->withErrors(['member' => 'Owner cannot be removed.']);
+        }
+
+        if ((int) Auth::id() === (int) $user->id) {
+            return back()->withErrors(['member' => 'You cannot remove yourself from this workspace.']);
         }
 
         $workspace->members()->detach($user->id);
