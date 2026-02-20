@@ -14,7 +14,25 @@
             <h1 class="text-2xl font-bold text-gray-900">{{ $task->name }}</h1>
             <div class="flex gap-2 mt-2"><span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">{{ str($task->status)->replace('_',' ')->title() }}</span><span class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700">{{ ucfirst($task->priority) }}</span></div>
         </div>
-        <div class="flex gap-3">@if($canContribute)<a href="{{ route('tasks.edit', $task) }}" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg"><i class="fa-solid fa-pen-to-square mr-2"></i>Edit</a>@endif@if($isManager)<button @click="showDeleteModal = true" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"><i class="fa-solid fa-trash mr-2"></i>Delete</button>@endif</div>
+        <div class="flex gap-3">
+            @if ($canContribute)
+                <a
+                    href="{{ route('tasks.edit', $task) }}"
+                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg"
+                >
+                    <i class="fa-solid fa-pen-to-square mr-2"></i>Edit
+                </a>
+            @endif
+
+            @if ($isManager)
+                <button
+                    @click="showDeleteModal = true"
+                    class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+                >
+                    <i class="fa-solid fa-trash mr-2"></i>Delete
+                </button>
+            @endif
+        </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
