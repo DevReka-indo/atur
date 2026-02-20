@@ -54,7 +54,16 @@ class WorkspaceController extends Controller
             abort(403, 'You do not have access to this workspace.');
         }
 
-        $workspace->load(['projects', 'members']);
+        $workspace->load([
+            'projects' => function ($query) {
+                $query->withCount('tasks')
+                    ->with([
+                        'tasks.statusWeight',
+                        'members:id,name',
+                    ]);
+            },
+            'members',
+        ]);
         $availableUsers = User::whereNotIn('id', $workspace->members->pluck('id'))
             ->orderBy('name')
             ->get();
