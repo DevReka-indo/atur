@@ -10,7 +10,17 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" x-data="{ showDeleteModal: false }">
     <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
         <div>
-            <p class="text-sm text-gray-500 mb-2">{{ $task->project->workspace->name }} > {{ $task->project->name }} > {{ $task->name }}</p>
+            <nav class="text-sm text-gray-500 mb-2 flex items-center gap-2" aria-label="Breadcrumb">
+                <a href="{{ route('workspaces.show', $task->project->workspace) }}" class="hover:text-indigo-600 hover:underline">
+                    {{ $task->project->workspace->name }}
+                </a>
+                <span aria-hidden="true">/</span>
+                <a href="{{ route('projects.show', $task->project) }}" class="hover:text-indigo-600 hover:underline">
+                    {{ $task->project->name }}
+                </a>
+                <span aria-hidden="true">/</span>
+                <span class="text-gray-700" aria-current="page">{{ $task->name }}</span>
+            </nav>
             <h1 class="text-2xl font-bold text-gray-900">{{ $task->name }}</h1>
             <div class="flex gap-2 mt-2"><span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">{{ str($task->status)->replace('_',' ')->title() }}</span><span class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700">{{ ucfirst($task->priority) }}</span></div>
         </div>
