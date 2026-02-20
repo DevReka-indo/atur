@@ -23,6 +23,7 @@
                         </span>
                     </a>
                 </div>
+            </div>
 
                 <nav class="px-4 py-6 space-y-2">
                     <a href="{{ route('dashboard') }}" class="group flex items-center gap-3 px-4 py-3 rounded-xl transition {{ request()->routeIs('dashboard') ? 'bg-indigo-500/20 text-indigo-200 border border-indigo-400/40' : 'hover:bg-slate-800/90 text-slate-300' }}">
@@ -51,7 +52,7 @@
                 </div>
             </div>
 
-            {{-- <div class="p-4 border-t border-slate-800">
+            <div class="p-4 border-t border-slate-800">
                 <div class="rounded-xl bg-slate-800/80 p-4">
                     <p class="text-sm font-semibold text-white">{{ Auth::user()->name }}</p>
                     <p class="text-xs text-slate-400">{{ Auth::user()->email }}</p>
@@ -62,7 +63,7 @@
                         </button>
                     </form>
                 </div>
-            </div> --}}
+            </div>
         </aside>
 
         <div class="flex-1">

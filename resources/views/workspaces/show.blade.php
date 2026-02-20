@@ -95,6 +95,9 @@
                         <div class="flex items-center gap-2">
                             @if($workspace->isOwner($member))
                                 <span class="px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-800"> <i class="fa-solid fa-crown mr-1"></i>Owner</span>
+                            @elseif((int) $member->id === (int) Auth::id())
+                                <span class="px-2 py-1 text-xs rounded-full bg-sky-100 text-sky-800"><i class="fa-solid fa-user mr-1"></i>You</span>
+                                <span class="text-xs text-gray-500">You cannot edit/remove yourself.</span>
                             @elseif($canManageMembers)
                                 <form method="POST" action="{{ route('workspaces.members.update', [$workspace, $member]) }}" class="flex items-center gap-2">
                                     @csrf
