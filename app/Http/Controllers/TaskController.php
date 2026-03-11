@@ -136,16 +136,23 @@ class TaskController extends Controller
         return view('tasks.show', compact('task'));
     }
 
-    public function edit(Task $task)
+    public function edit(Request $request)
     {
-        if (!$task->project->canContribute(Auth::user())) {
-            abort(403, 'Viewer can only view this task.');
+        $task = Task::with('project', 'assignee')
+            ->findOrFail($request->id);
+
+        if (!$task->project) {
+            abort(404, 'Task tidak memiliki project.');
         }
 
-        $project = $task->project;
-        $assignees = $project->members;
+        if (!$task->project->isMember(Auth::user())) {
+            abort(403);
+        }
 
-        return view('tasks.edit', compact('task', 'project', 'assignees'));
+        $projects = Auth::user()->projects;
+        $assignees = $task->project->members;
+
+        return view('tasks.edit', compact('task', 'projects', 'assignees'));
     }
 
     public function update(Request $request, Task $task)

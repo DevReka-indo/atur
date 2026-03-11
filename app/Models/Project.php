@@ -48,8 +48,8 @@ class Project extends Model
     public function members()
     {
         return $this->belongsToMany(User::class, 'project_members')
-                    ->withPivot('role', 'joined_at')
-                    ->withTimestamps(); // SEKARANG BISA PAKAI INI
+            ->withPivot('role', 'joined_at')
+            ->withTimestamps(); // SEKARANG BISA PAKAI INI
     }
 
     /**
@@ -106,9 +106,9 @@ class Project extends Model
     public function isManager(User $user)
     {
         return $this->members()
-                    ->wherePivot('user_id', $user->id)
-                    ->wherePivot('role', 'manager')
-                    ->exists();
+            ->wherePivot('user_id', $user->id)
+            ->wherePivot('role', 'manager')
+            ->exists();
     }
 
     /**
@@ -117,8 +117,8 @@ class Project extends Model
     public function isMember(User $user)
     {
         return $this->members()
-                    ->wherePivot('user_id', $user->id)
-                    ->exists();
+            ->wherePivot('user_id', $user->id)
+            ->exists();
     }
 
 
