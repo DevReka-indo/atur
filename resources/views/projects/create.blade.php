@@ -41,7 +41,7 @@
                                 <label class="block text-sm font-semibold text-gray-800 mb-2">
                                     Workspace <span class="text-red-500">*</span>
                                 </label>
-                                @if(request('workspace_id') && $workspaces->firstWhere('id', request('workspace_id')))
+                                @if (request('workspace_id') && $workspaces->firstWhere('id', request('workspace_id')))
                                     @php $lockedWorkspace = $workspaces->firstWhere('id', request('workspace_id')); @endphp
                                     <input type="hidden" name="workspace_id" value="{{ $lockedWorkspace->id }}">
                                     <div class="w-full px-4 py-3 border border-gray-300 rounded-xl bg-gray-50/50">
@@ -63,7 +63,8 @@
                                         @endforeach
                                     </select>
                                     @error('workspace_id')
-                                        <div class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                        <div
+                                            class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                                             {{ $message }}
                                         </div>
                                     @enderror
@@ -75,33 +76,41 @@
                                 <label class="block text-sm font-semibold text-gray-800 mb-2">
                                     Timeline <span class="text-red-500">*</span>
                                 </label>
+
                                 <div class="grid grid-cols-2 gap-3">
                                     <div>
-                                        <input type="date" name="start_date" id="start_date" value="{{ old('start_date') }}" required onchange="updateMinDueDate(this.value)"
+                                        <input type="date" name="start_date" id="start_date"
+                                            value="{{ old('start_date') }}" required onchange="updateMinDueDate(this.value)"
                                             class="w-full px-4 py-3 border border-gray-300 rounded-xl
-                                                    focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500
-                                                    transition-all duration-200
-                                                    @error('start_date') border-red-400 bg-red-50/50 @enderror">
+                    focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500
+                    transition-all duration-200
+                    @error('start_date') border-red-400 bg-red-50/50 @enderror">
+
                                         @error('start_date')
-                                            <div class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                            <div
+                                                class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                                                 {{ $message }}
                                             </div>
                                         @enderror
                                     </div>
+
                                     <div>
-                                        <input type="date" name="due_date" id="due_date" value="{{ old('due_date') }}" required
-                                                min="{{ old('start_date') ?: date('Y-m-d') }}"
+                                        <input type="date" name="due_date" id="due_date" value="{{ old('due_date') }}"
+                                            required min="{{ old('start_date') }}"
                                             class="w-full px-4 py-3 border border-gray-300 rounded-xl
-                                                    focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500
-                                                    transition-all duration-200
-                                                    @error('due_date') border-red-400 bg-red-50/50 @enderror">
+                    focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500
+                    transition-all duration-200
+                    @error('due_date') border-red-400 bg-red-50/50 @enderror">
+
                                         @error('due_date')
-                                            <div class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                            <div
+                                                class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                                                 {{ $message }}
                                             </div>
                                         @enderror
                                     </div>
                                 </div>
+
                                 <div class="flex justify-between mt-2 text-xs text-gray-500">
                                     <span>Start Date</span>
                                     <span>Due Date</span>
@@ -188,35 +197,33 @@
     </div>
 
     <script>
-        const today = new Date().toISOString().split('T')[0];
-
-        // Set min start_date = hari ini
-        document.getElementById('start_date').min = today;
-
-        function updateMinDueDate(startVal) {
+        function updateMinDueDate(startDateValue) {
             const dueDateInput = document.getElementById('due_date');
-            if (!startVal) return;
 
-            // Min due date = start date (yang sudah pasti >= hari ini)
-            dueDateInput.min = startVal;
+            if (!dueDateInput) {
+                return;
+            }
 
-            // Reset due date kalau lebih kecil dari start date baru
-            if (dueDateInput.value && dueDateInput.value < startVal) {
+            if (!startDateValue) {
+                dueDateInput.removeAttribute('min');
+                return;
+            }
+
+            dueDateInput.min = startDateValue;
+
+            if (dueDateInput.value && dueDateInput.value < startDateValue) {
                 dueDateInput.value = '';
             }
         }
 
-        window.addEventListener('DOMContentLoaded', function () {
-            // Pastikan start_date min = hari ini saat load
-            document.getElementById('start_date').min = today;
+        window.addEventListener('DOMContentLoaded', function() {
+            const startDateInput = document.getElementById('start_date');
 
-            const startVal = document.getElementById('start_date').value;
-            if (startVal) {
-                updateMinDueDate(startVal);
-            } else {
-                // Kalau belum ada start date, due date min = hari ini juga
-                document.getElementById('due_date').min = today;
+            if (!startDateInput) {
+                return;
             }
+
+            updateMinDueDate(startDateInput.value);
         });
     </script>
 @endsection

@@ -13,6 +13,7 @@ use App\Http\Controllers\DiscussionController;
 use App\Http\Controllers\Auth\SsoCallbackController;
 use App\Http\Controllers\Auth\SsoLoginController;
 use App\Http\Controllers\Auth\SsoRedirectController;
+use Illuminate\Support\Facades\Auth;
 
 Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])->name('google.login');
 Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
@@ -25,7 +26,13 @@ Route::middleware('guest')->group(function () {
 Route::get('/sso/callback', SsoCallbackController::class)->name('sso.callback');
 
 // Welcome
-Route::get('/', fn() => view('welcome'));
+// Route::get('/', fn() => view('welcome'));
+Route::get('/', function() {
+    if (Auth::check()) {
+        return redirect()->route('dashboard');
+    }
+    return view('auth.login');
+});
 
 // Invitation
 Route::get('/invitations/accept/{token}', [InvitationController::class, 'accept'])->name('invitations.accept');
