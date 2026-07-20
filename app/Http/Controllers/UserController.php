@@ -6,17 +6,45 @@ namespace App\Http\Controllers;
 
 use Closure;
 use App\Models\User;
+use App\Models\Invitation;
+use App\Models\ProjectThread;
+use App\Models\ProjectThreadMessage;
+use App\Models\TaskStatusHistory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class UserController extends Controller
 {
-    private function checkAdmin()
+    private function checkAdmin(): void
     {
         if (!Auth::user()->isSuperAdmin()) {
             abort(403);
         }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function substantiveDataLabels(User $user): array
+    {
+        $checks = [
+            'workspace ownership' => $user->createdWorkspaces()->exists(),
+            'project ownership' => $user->createdProjects()->exists(),
+            'task ownership' => $user->createdTasks()->exists(),
+            'task status history' => TaskStatusHistory::where('changed_by', $user->id)->exists(),
+            'task comments' => $user->comments()->exists(),
+            'task attachments' => $user->attachments()->exists(),
+            'activity logs' => $user->activityLogs()->exists(),
+            'project baselines' => $user->createdBaselines()->exists(),
+            'actual progress' => $user->recordedProgress()->exists(),
+            'discussion threads' => ProjectThread::where('user_id', $user->id)->exists(),
+            'discussion messages' => ProjectThreadMessage::where('user_id', $user->id)->exists(),
+            'invitations' => Invitation::where('invited_by', $user->id)->exists(),
+        ];
+
+        return array_keys(array_filter($checks));
     }
 
     public function index(Request $request)
@@ -81,12 +109,16 @@ class UserController extends Controller
 
     public function edit(User $management_user)
     {
+        $this->checkAdmin();
+
         return view('managementusers.edit', compact('management_user'));
     }
 
 
     public function update(Request $request, User $management_user)
     {
+        $this->checkAdmin();
+
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email,' . $management_user->id,
@@ -107,25 +139,29 @@ class UserController extends Controller
 
     public function destroy(User $management_user)
     {
-        // Hapus pivot
-        $management_user->workspaces()->detach();
-        $management_user->projects()->detach();
+        $this->checkAdmin();
 
-        // Hapus relasi hasMany
-        $management_user->activityLogs()->delete();
-        $management_user->comments()->delete();
-        $management_user->attachments()->delete();
-        $management_user->assignedTasks()->delete();
-        $management_user->createdTasks()->delete();
-        $management_user->createdBaselines()->delete();
-        $management_user->recordedProgress()->delete();
-        $management_user->createdProjects()->delete();
-        $management_user->createdWorkspaces()->delete();
-        \App\Models\Notification::where('user_id', $management_user->id)->delete();
-        \App\Models\TaskStatusHistory::where('changed_by', $management_user->id)->delete();
+        $substantiveData = DB::transaction(function () use ($management_user): array {
+            $lockedUser = User::whereKey($management_user->id)->lockForUpdate()->firstOrFail();
+            $substantiveData = $this->substantiveDataLabels($lockedUser);
 
-        // Hapus user
-        $management_user->delete();
+            if ($substantiveData === []) {
+                DB::table(config('session.table', 'sessions'))
+                    ->where('user_id', $lockedUser->id)
+                    ->delete();
+                $lockedUser->delete();
+            }
+
+            return $substantiveData;
+        });
+
+        if ($substantiveData !== []) {
+            return back()->withErrors([
+                'user' => 'User tidak dapat dihapus permanen karena memiliki data substantif: '
+                    . implode(', ', $substantiveData)
+                    . '. Nonaktifkan akun melalui perubahan status.',
+            ]);
+        }
 
         return redirect()
             ->route('management-users.index')
@@ -135,6 +171,8 @@ class UserController extends Controller
 
     public function toggleStatus(User $management_user)
     {
+        $this->checkAdmin();
+
         $management_user->update([
             'is_active' => !$management_user->is_active
         ]);

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Models\Task;
 use App\Models\Workspace;
 use App\Models\Notification;
 use Illuminate\Http\Request;
@@ -428,7 +429,65 @@ class ProjectController extends Controller
             return back()->withErrors(['member' => 'Project creator cannot be removed.']);
         }
 
-        $project->members()->detach($user->id);
+        DB::transaction(function () use ($project, $user): void {
+            $taskIds = Task::query()->where('project_id', $project->id)->pluck('id')->all();
+
+            $pivotAssignmentCount = DB::table('task_assignees')
+                ->where('user_id', $user->id)
+                ->whereIn('task_id', $taskIds)
+                ->count();
+            $legacyAssignmentCount = Task::query()
+                ->whereIn('id', $taskIds)
+                ->where('assignee_id', $user->id)
+                ->count();
+
+            DB::table('task_assignees')
+                ->where('user_id', $user->id)
+                ->whereIn('task_id', $taskIds)
+                ->delete();
+            Task::query()
+                ->whereIn('id', $taskIds)
+                ->where('assignee_id', $user->id)
+                ->update(['assignee_id' => null]);
+
+            Notification::query()
+                ->where('user_id', $user->id)
+                ->where(function ($query) use ($project, $taskIds): void {
+                    $query->where('project_id', $project->id)
+                        ->orWhereIn('task_id', $taskIds);
+                })
+                ->delete();
+
+            $project->members()->detach($user->id);
+
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'updated',
+                'entity_type' => 'project',
+                'entity_id' => $project->id,
+                'description' => sprintf(
+                    'Actor %s (ID %d) removed member %s (ID %d) from project %s (ID %d); detached %d pivot assignment(s) and cleared %d legacy assignment(s).',
+                    Auth::user()->name,
+                    Auth::id(),
+                    $user->name,
+                    $user->id,
+                    $project->name,
+                    $project->id,
+                    $pivotAssignmentCount,
+                    $legacyAssignmentCount,
+                ),
+                'old_value' => [
+                    'target_user_id' => $user->id,
+                    'pivot_assignment_count' => $pivotAssignmentCount,
+                    'legacy_assignment_count' => $legacyAssignmentCount,
+                ],
+                'new_value' => [
+                    'membership' => 'removed',
+                    'pivot_assignment_count' => 0,
+                    'legacy_assignment_count' => 0,
+                ],
+            ]);
+        });
 
         return back()->with('success', 'Project member removed.');
     }

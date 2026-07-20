@@ -3,10 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\Workspace;
+use App\Models\Notification;
+use App\Models\Task;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Models\ActivityLog;
+use Illuminate\Support\Facades\DB;
 
 class WorkspaceController extends Controller
 {
@@ -280,11 +283,79 @@ class WorkspaceController extends Controller
             return back()->withErrors(['member' => 'You cannot remove yourself.']);
         }
 
-        foreach ($workspace->projects as $project) {
-            $project->members()->detach($user->id);
-        }
+        DB::transaction(function () use ($workspace, $user): void {
+            $projectIds = $workspace->projects()->pluck('id')->all();
+            $taskIds = Task::query()->whereIn('project_id', $projectIds)->pluck('id')->all();
 
-        $workspace->members()->detach($user->id);
+            $projectMembershipCount = DB::table('project_members')
+                ->where('user_id', $user->id)
+                ->whereIn('project_id', $projectIds)
+                ->count();
+            $pivotAssignmentCount = DB::table('task_assignees')
+                ->where('user_id', $user->id)
+                ->whereIn('task_id', $taskIds)
+                ->count();
+            $legacyAssignmentCount = Task::query()
+                ->whereIn('id', $taskIds)
+                ->where('assignee_id', $user->id)
+                ->count();
+
+            DB::table('task_assignees')
+                ->where('user_id', $user->id)
+                ->whereIn('task_id', $taskIds)
+                ->delete();
+            Task::query()
+                ->whereIn('id', $taskIds)
+                ->where('assignee_id', $user->id)
+                ->update(['assignee_id' => null]);
+
+            if ($projectIds !== [] || $taskIds !== []) {
+                Notification::query()
+                    ->where('user_id', $user->id)
+                    ->where(function ($query) use ($projectIds, $taskIds): void {
+                        $query->whereIn('project_id', $projectIds)
+                            ->orWhereIn('task_id', $taskIds);
+                    })
+                    ->delete();
+            }
+
+            DB::table('project_members')
+                ->where('user_id', $user->id)
+                ->whereIn('project_id', $projectIds)
+                ->delete();
+            $workspace->members()->detach($user->id);
+
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'updated',
+                'entity_type' => 'workspace',
+                'entity_id' => $workspace->id,
+                'description' => sprintf(
+                    'Actor %s (ID %d) removed member %s (ID %d) from workspace %s (ID %d); detached %d project membership(s), %d pivot assignment(s), and cleared %d legacy assignment(s).',
+                    Auth::user()->name,
+                    Auth::id(),
+                    $user->name,
+                    $user->id,
+                    $workspace->name,
+                    $workspace->id,
+                    $projectMembershipCount,
+                    $pivotAssignmentCount,
+                    $legacyAssignmentCount,
+                ),
+                'old_value' => [
+                    'target_user_id' => $user->id,
+                    'project_membership_count' => $projectMembershipCount,
+                    'pivot_assignment_count' => $pivotAssignmentCount,
+                    'legacy_assignment_count' => $legacyAssignmentCount,
+                ],
+                'new_value' => [
+                    'workspace_membership' => 'removed',
+                    'project_membership_count' => 0,
+                    'pivot_assignment_count' => 0,
+                    'legacy_assignment_count' => 0,
+                ],
+            ]);
+        });
 
         return redirect(route('workspaces.show', $workspace->token) . '?tab=members')
             ->with('success', 'Member removed from workspace and all projects.');

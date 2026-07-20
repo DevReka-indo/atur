@@ -35,11 +35,21 @@ class GoogleAuthController extends Controller
             $user = User::where('google_id', $googleUser->id)->first();
 
             if ($user) {
+                if (!$user->is_active) {
+                    return redirect()->route('login')
+                        ->with('error', 'Akun Anda tidak aktif.');
+                }
+
                 Auth::login($user);
             } else {
                 $existingUser = User::where('email', $googleUser->email)->first();
 
                 if ($existingUser) {
+                    if (!$existingUser->is_active) {
+                        return redirect()->route('login')
+                            ->with('error', 'Akun Anda tidak aktif.');
+                    }
+
                     $existingUser->update([
                         'google_id' => $googleUser->id,
                         'avatar_url' => $googleUser->avatar,

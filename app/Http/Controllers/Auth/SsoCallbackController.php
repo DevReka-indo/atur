@@ -45,6 +45,12 @@ class SsoCallbackController extends Controller
                 $user = User::where('email', $ssoUser['email'])->first();
             }
 
+            if ($user && ! $user->is_active) {
+                return redirect()
+                    ->route('sso.login')
+                    ->with('error', 'Akun Anda tidak aktif.');
+            }
+
             $isNewUser = ! $user;
 
             if (! $user) {

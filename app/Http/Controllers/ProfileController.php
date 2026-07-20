@@ -6,6 +6,7 @@ use App\Http\Requests\ProfileUpdateRequest;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redirect;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
@@ -93,24 +94,11 @@ class ProfileController extends Controller
             ]);
         }
 
-        $user->workspaces()->detach();
-        $user->projects()->detach();
+        DB::transaction(function () use ($user): void {
+            $user->update(['is_active' => false]);
+        });
 
-        $user->activityLogs()->delete();
-        $user->comments()->delete();
-        $user->attachments()->delete();
-        $user->assignedTasks()->delete();
-        $user->createdTasks()->delete();
-        $user->createdBaselines()->delete();
-        $user->recordedProgress()->delete();
-        $user->createdProjects()->delete();
-        $user->createdWorkspaces()->delete();
-
-        \App\Models\Notification::where('user_id', $user->id)->delete();
-
-        Auth::logout();
-
-        $user->delete();
+        Auth::logoutCurrentDevice();
 
         $request->session()->invalidate();
         $request->session()->regenerateToken();
