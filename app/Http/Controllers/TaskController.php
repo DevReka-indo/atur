@@ -62,10 +62,8 @@ class TaskController extends Controller
         $status = $request->get('status', 'all');
 
         $query = Task::query()
-            ->with(['project.workspace', 'assignees', 'statusWeight', 'subtasks'])
-            ->whereHas('assignees', function ($q) use ($user) {
-                $q->where('user_id', $user->id);
-            });
+            ->with(['project.workspace', 'assignees', 'assignee', 'statusWeight', 'subtasks'])
+            ->assignedToUser($user->id);
 
         if ($status !== 'all') {
             $query->where('status', $status);
@@ -218,7 +216,7 @@ class TaskController extends Controller
     public function edit(string $token)
     {
         $task = $this->findByToken($token);
-        $task->load('project', 'assignee');
+        $task->load('project', 'assignees', 'assignee');
 
         if (!$task->project) {
             abort(404, 'Task tidak memiliki project.');
@@ -246,7 +244,7 @@ class TaskController extends Controller
             abort(403, 'You do not have access to this task.');
         }
 
-        $task->load(['project.workspace', 'assignee', 'creator', 'statusWeight', 'subtasks.assignee', 'comments.user', 'attachments.uploader', 'statusHistory.changer']);
+        $task->load(['project.workspace', 'assignees', 'assignee', 'creator', 'statusWeight', 'subtasks.assignees', 'subtasks.assignee', 'comments.user', 'attachments.uploader', 'statusHistory.changer']);
 
         // Deteksi dari mana task diakses
         $fromMyTask = str_contains(url()->previous(), '/tasks') && !str_contains(url()->previous(), '/projects');
@@ -655,9 +653,7 @@ class TaskController extends Controller
 
         $query = Task::query()
             ->with(['project', 'assignees', 'assignee'])
-            ->whereHas('assignees', function ($q) use ($user) {
-                $q->where('user_id', $user->id);
-            })
+            ->assignedToUser($user->id)
             ->whereNotNull('start_date')
             ->whereNotNull('due_date');
 

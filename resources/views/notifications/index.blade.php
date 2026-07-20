@@ -158,21 +158,6 @@
             class="bg-white/70 backdrop-blur-md p-4 rounded-2xl border border-white/40 shadow-sm flex flex-col max-h-[500px]">
 
             {{-- URGENT TASKS WARNING --}}
-            @php
-                $urgentTasks = \App\Models\Task::where('priority', 'urgent')
-                    ->whereNotIn('status', ['completed', 'stopped', 'cancelled'])
-                    ->where(function ($q) {
-                        $q->whereHas('assignees', fn($q) => $q->where('user_id', Auth::id()))->orWhere(
-                            'created_by',
-                            Auth::id(),
-                        );
-                    })
-                    ->with('project')
-                    ->orderBy('due_date', 'asc')
-                    ->limit(5)
-                    ->get();
-            @endphp
-
             @if ($urgentTasks->count() > 0)
                 <div class="mb-4 pb-4 border-b border-red-200">
                     <h2 class="text-base font-semibold text-red-700 flex items-center gap-2 mb-3">

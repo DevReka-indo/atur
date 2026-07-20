@@ -2,12 +2,10 @@
 
 namespace App\Models;
 
-use Illuminate\Support\Str;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Models\TaskAttachment;
-use App\Models\TaskComment;
-use App\Models\Notification;
+use Illuminate\Support\Str;
 
 class Task extends Model
 {
@@ -53,6 +51,7 @@ class Task extends Model
     public function getEarnedValueAttribute()
     {
         $statusWeight = $this->statusWeight;
+
         return $this->weight * ($statusWeight ? $statusWeight->weight_value : 0);
     }
 
@@ -119,9 +118,24 @@ class Task extends Model
     /**
      * Scope untuk filter by assignee
      */
-    public function scopeAssignedTo($query, $userId)
+    public function scopeAssignedToUser(Builder $query, int $userId): Builder
     {
-        return $query->where('assignee_id', $userId);
+        return $query->where(function (Builder $assignmentQuery) use ($userId): void {
+            $assignmentQuery
+                ->whereHas('assignees', function (Builder $assigneeQuery) use ($userId): void {
+                    $assigneeQuery->where('users.id', $userId);
+                })
+                ->orWhere(function (Builder $legacyAssignmentQuery) use ($userId): void {
+                    $legacyAssignmentQuery
+                        ->whereDoesntHave('assignees')
+                        ->where('assignee_id', $userId);
+                });
+        });
+    }
+
+    public function scopeAssignedTo(Builder $query, int $userId): Builder
+    {
+        return $query->assignedToUser($userId);
     }
 
     public function user()

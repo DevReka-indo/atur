@@ -821,7 +821,7 @@
                                                 </div>
                                             @endif
                                             <div class="flex items-center justify-between pt-2 border-t border-gray-100">
-                                                @if ($task->assignees->count())
+                                                @if ($task->assignees->isNotEmpty())
                                                     <div class="flex items-center gap-0.5">
                                                         @foreach ($task->assignees->take(3) as $assignee)
                                                             <div class="w-5 h-5 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-[10px]"
@@ -833,6 +833,11 @@
                                                             <span
                                                                 class="text-xs text-gray-400">+{{ $task->assignees->count() - 3 }}</span>
                                                         @endif
+                                                    </div>
+                                                @elseif ($task->assignee)
+                                                    <div class="w-5 h-5 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-[10px]"
+                                                        title="{{ $task->assignee->name }}">
+                                                        {{ strtoupper(substr($task->assignee->name, 0, 1)) }}
                                                     </div>
                                                 @else
                                                     <span class="text-xs text-gray-300">Unassigned</span>

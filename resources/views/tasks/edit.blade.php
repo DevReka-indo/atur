@@ -97,14 +97,20 @@
                             </div>
 
                             {{-- Assignee --}}
+                            @php
+                                $currentAssignees = $task->assignees->isNotEmpty()
+                                    ? $task->assignees
+                                    : collect([$task->assignee])->filter();
+                                $selectedAssigneeIds = old('assignee_ids', $currentAssignees->pluck('id')->all());
+                            @endphp
                             <div class="relative" id="assignee-wrapper">
                                 <label class="block text-sm font-semibold text-gray-800 mb-2">PIC</label>
 
                                 <button type="button" onclick="toggleDropdown()"
                                     class="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white text-left focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 flex items-center justify-between">
                                     <span id="assignee-label" class="text-gray-700 truncate">
-                                        @if ($task->assignees->count())
-                                            {{ $task->assignees->pluck('name')->join(', ') }}
+                                        @if ($currentAssignees->isNotEmpty())
+                                            {{ $currentAssignees->pluck('name')->join(', ') }}
                                         @else
                                             Unassigned
                                         @endif
@@ -117,7 +123,7 @@
                                     @foreach ($assignees as $assignee)
                                         <label class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer">
                                             <input type="checkbox" name="assignee_ids[]" value="{{ $assignee->id }}"
-                                                {{ in_array($assignee->id, old('assignee_ids', $task->assignees->pluck('id')->toArray())) ? 'checked' : '' }}
+                                                {{ in_array($assignee->id, $selectedAssigneeIds) ? 'checked' : '' }}
                                                 onchange="updateLabel()"
                                                 class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
                                             <span class="text-sm text-gray-700">{{ $assignee->name }}</span>

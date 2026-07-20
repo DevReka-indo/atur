@@ -193,6 +193,7 @@ class ProjectController extends Controller
             'workspace',
             'workspace.members',
             'members',
+            'tasks.assignees',
             'tasks.assignee',
             'tasks.statusWeight',
             'activeBaseline.plannedProgress',
@@ -243,7 +244,7 @@ class ProjectController extends Controller
         // overload
         $overloadedMemberIds = $project->members->filter(function ($member) use ($project) {
             $count = \App\Models\Task::where('project_id', $project->id)
-                ->whereHas('assignees', fn($q) => $q->where('user_id', $member->id))
+                ->assignedToUser($member->id)
                 ->whereNotIn('status', ['completed', 'cancelled'])
                 ->count();
             return $count >= 5;
@@ -251,7 +252,7 @@ class ProjectController extends Controller
 
         $memberTaskCounts = $project->members->mapWithKeys(function ($member) use ($project) {
             $count = \App\Models\Task::where('project_id', $project->id)
-                ->whereHas('assignees', fn($q) => $q->where('user_id', $member->id))
+                ->assignedToUser($member->id)
                 ->whereNotIn('status', ['completed', 'cancelled'])
                 ->count();
             return [$member->id => $count];

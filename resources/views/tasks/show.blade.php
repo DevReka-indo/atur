@@ -287,7 +287,7 @@
                                             <div>
                                                 <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">
                                                     PIC</p>
-                                                @if ($task->assignees->count())
+                                                @if ($task->assignees->isNotEmpty())
                                                     <div class="flex flex-wrap gap-1 mt-0.5">
                                                         @foreach ($task->assignees as $assignee)
                                                             @if ($assignee->id === auth()->id())
@@ -298,6 +298,16 @@
                                                                     class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">{{ $assignee->name }}</span>
                                                             @endif
                                                         @endforeach
+                                                    </div>
+                                                @elseif ($task->assignee)
+                                                    <div class="flex flex-wrap gap-1 mt-0.5">
+                                                        @if ($task->assignee->id === auth()->id())
+                                                            <span
+                                                                class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-600 text-white">You</span>
+                                                        @else
+                                                            <span
+                                                                class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">{{ $task->assignee->name }}</span>
+                                                        @endif
                                                     </div>
                                                 @else
                                                     <p class="text-sm text-gray-400 mt-0.5 italic">Unassigned</p>

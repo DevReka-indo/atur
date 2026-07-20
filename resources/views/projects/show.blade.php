@@ -833,7 +833,7 @@
 
                                 function ganttResource($task)
                                 {
-                                    if ($task->relationLoaded('assignees') && $task->assignees->count()) {
+                                    if ($task->assignees->isNotEmpty()) {
                                         return $task->assignees->pluck('name')->implode(', ');
                                     }
                                     if ($task->assignee) {
@@ -843,7 +843,7 @@
                                 }
 
                                 // Ambil baseline aktif
-                                $activeBaseline = $project->baselines()->where('is_active', true)->first();
+                                $activeBaseline = $project->activeBaseline;
 
                                 // Dependency DHTMLX format
                                 $depTypeMap = ['FS' => 0, 'SS' => 1, 'FF' => 2, 'SF' => 3];
@@ -1151,13 +1151,25 @@
                                                 @endif
                                                 <div
                                                     class="flex items-center justify-between pt-2 border-t border-gray-100">
-                                                    @if ($task->assignee ?? null)
+                                                    @if ($task->assignees->isNotEmpty())
+                                                        <div class="flex flex-wrap items-center gap-1 text-xs text-gray-500">
+                                                            @foreach ($task->assignees as $assignee)
+                                                                <span class="inline-flex items-center gap-1">
+                                                                    <span
+                                                                        class="w-5 h-5 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-[10px]">
+                                                                        {{ strtoupper(substr($assignee->name, 0, 1)) }}
+                                                                    </span>
+                                                                    {{ $assignee->name }}
+                                                                </span>
+                                                            @endforeach
+                                                        </div>
+                                                    @elseif ($task->assignee)
                                                         <span class="inline-flex items-center gap-1 text-xs text-gray-500">
-                                                            <div
+                                                            <span
                                                                 class="w-5 h-5 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-[10px]">
                                                                 {{ strtoupper(substr($task->assignee->name, 0, 1)) }}
-                                                            </div>
-                                                            {{ Str::limit($task->assignee->name, 12) }}
+                                                            </span>
+                                                            {{ $task->assignee->name }}
                                                         </span>
                                                     @else
                                                         <span class="text-xs text-gray-300">Unassigned</span>

@@ -29,7 +29,7 @@ class DashboardController extends Controller
         $stats = [
             'total_workspaces' => $user->workspaces()->count(),
             'total_projects' => $user->projects()->count(),
-            'assigned_tasks' => Task::whereHas('assignees', fn($q) => $q->where('user_id', $user->id))->count(),
+            'assigned_tasks' => Task::assignedToUser($user->id)->count(),
             'completed_tasks' => $allProjects->filter(function ($project) {
                 $totalWeight = $project->tasks->sum('weight');
                 $earnedValue = $project->tasks->sum(
@@ -45,7 +45,7 @@ class DashboardController extends Controller
         $recentTasks = Task::query()
             ->with(['project', 'statusWeight'])
             ->where(function ($query) use ($user, $projectIds) {
-                $query->where('assignee_id', $user->id)
+                $query->assignedToUser($user->id)
                     ->orWhere('created_by', $user->id)
                     ->orWhereIn('project_id', $projectIds);
             })
@@ -83,7 +83,7 @@ class DashboardController extends Controller
         }
 
         $deadlineTasks = Task::where(function ($q) use ($user, $projectIds) {
-            $q->where('assignee_id', $user->id)
+            $q->assignedToUser($user->id)
                 ->orWhere('created_by', $user->id)
                 ->orWhereIn('project_id', $projectIds);
         })
@@ -107,7 +107,7 @@ class DashboardController extends Controller
 
             foreach ($project->members as $member) {
                 $count = Task::where('project_id', $project->id)
-                    ->whereHas('assignees', fn($q) => $q->where('user_id', $member->id))
+                    ->assignedToUser($member->id)
                     ->whereNotIn('status', ['completed', 'cancelled'])
                     ->count();
 
@@ -199,9 +199,7 @@ class DashboardController extends Controller
             ->limit(5)
             ->get();
 
-        $tasks = Task::whereHas('assignees', function ($q) use ($user) {
-            $q->where('user_id', $user->id);
-        })
+        $tasks = Task::assignedToUser($user->id)
             ->where('name', 'LIKE', "%{$query}%")
             ->select('id', 'name', 'token')
             ->limit(5)
@@ -305,9 +303,7 @@ class DashboardController extends Controller
             });
 
         $deadlineTasks = Task::where(function ($q) use ($userId) {
-            $q->whereHas('assignees', function ($q2) use ($userId) {
-                $q2->where('user_id', $userId);
-            })
+            $q->assignedToUser($userId)
                 ->orWhere('created_by', $userId);
         })
             ->with(['project'])
@@ -318,11 +314,14 @@ class DashboardController extends Controller
             ->get();
 
         $urgentTasks = Task::where('priority', 'urgent')
-            ->whereNotIn('status', ['completed', 'cancelled'])
-            ->whereHas('assignees', function ($q) use ($userId) {
-                $q->where('user_id', $userId);
+            ->whereNotIn('status', ['completed', 'stopped', 'cancelled'])
+            ->where(function ($query) use ($userId) {
+                $query->assignedToUser($userId)
+                    ->orWhere('created_by', $userId);
             })
             ->with('project')
+            ->orderBy('due_date')
+            ->limit(5)
             ->get();
 
         $urgentProjects = Project::where('status', 'urgent')
@@ -435,7 +434,7 @@ class DashboardController extends Controller
     // overload
     public function overloadList()
     {
-        $user = auth()->user();
+        $user = Auth::user();
         $isSuperAdmin = $user->isSuperAdmin();
 
         $overloadedMembers = collect();
@@ -451,7 +450,7 @@ class DashboardController extends Controller
 
             foreach ($project->members as $member) {
                 $tasks = Task::where('project_id', $project->id)
-                    ->whereHas('assignees', fn($q) => $q->where('user_id', $member->id))
+                    ->assignedToUser($member->id)
                     ->whereNotIn('status', ['completed', 'cancelled'])
                     ->get()
                     ->map(fn($t) => [
@@ -565,7 +564,7 @@ class DashboardController extends Controller
             ->where('type', 'deadline_warning')
             ->delete();
 
-        $deadlineCount = Task::whereHas('assignees', fn($q) => $q->where('user_id', $user->id))
+        $deadlineCount = Task::assignedToUser($user->id)
             ->whereNotIn('status', ['completed', 'cancelled'])
             ->whereNotNull('due_date')
             ->whereDate('due_date', '<=', now()->addDays(5)->toDateString())
@@ -580,7 +579,7 @@ class DashboardController extends Controller
             );
         }
 
-        $urgentTasks = Task::whereHas('assignees', fn($q) => $q->where('user_id', $user->id))
+        $urgentTasks = Task::assignedToUser($user->id)
             ->whereNotIn('status', ['completed', 'cancelled'])
             ->where('priority', 'urgent')
             ->get();
@@ -630,7 +629,7 @@ class DashboardController extends Controller
             }
             foreach ($project->members as $member) {
                 $count = Task::where('project_id', $project->id)
-                    ->whereHas('assignees', fn($q) => $q->where('user_id', $member->id))
+                    ->assignedToUser($member->id)
                     ->whereNotIn('status', ['completed', 'cancelled'])
                     ->count();
 
