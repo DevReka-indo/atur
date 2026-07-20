@@ -11,6 +11,7 @@ use App\Services\ProjectProgressService;
 use App\Models\User;
 use App\Models\ActivityLog;
 use App\Jobs\SendEmailNotification;
+use Illuminate\Support\Facades\DB;
 
 class ProjectController extends Controller
 {
@@ -50,7 +51,7 @@ class ProjectController extends Controller
         return view('projects.create', compact('workspaces'));
     }
 
-    public function store(Request $request)
+    public function store(Request $request, ProjectProgressService $projectProgressService)
     {
         $validated = $request->validate([
             'workspace_id' => 'required|exists:workspaces,id',
@@ -66,110 +67,114 @@ class ProjectController extends Controller
             abort(403, 'Only workspace owner/admin can create projects.');
         }
 
-        $project = Project::create([
-            'workspace_id' => $validated['workspace_id'],
-            'name'         => $validated['name'],
-            'description'  => $validated['description'],
-            'start_date'   => $validated['start_date'],
-            'end_date' => $validated['due_date'],
-            'status'       => $validated['status'],
-            'created_by'   => Auth::id(),
-        ]);
+        $project = DB::transaction(function () use ($projectProgressService, $validated, $workspace): Project {
+            $project = Project::create([
+                'workspace_id' => $validated['workspace_id'],
+                'name' => $validated['name'],
+                'description' => $validated['description'],
+                'start_date' => $validated['start_date'],
+                'end_date' => $validated['due_date'],
+                'status' => $validated['status'],
+                'created_by' => Auth::id(),
+            ]);
 
-        $project->members()->attach(Auth::id(), [
-            'role'      => 'manager',
-            'joined_at' => now(),
-        ]);
-
-        $workspaceOwner = User::find($workspace->created_by);
-        if ($workspaceOwner && $workspaceOwner->id !== Auth::id()) {
-            $project->members()->attach($workspaceOwner->id, [
-                'role'      => 'manager',
+            $project->members()->attach(Auth::id(), [
+                'role' => 'manager',
                 'joined_at' => now(),
             ]);
-        }
 
-        app(ProjectProgressService::class)->syncPlannedProgress($project);
-        app(ProjectProgressService::class)->recordActualProgress($project);
-        $defaultTasks = [
-            [
-                'name'        => 'Project Kickoff',
-                'description' => 'Mulai project, perkenalan tim, dan briefing awal.',
-                'status'      => 'to_do',
-                'priority'    => 'high',
-                'weight'      => 1.00,
-                'start_date'  => $validated['start_date'],
-                'due_date'    => $validated['start_date'],
-            ],
-            [
-                'name'        => 'Requirement Gathering',
-                'description' => 'Kumpulkan semua kebutuhan dan spesifikasi project.',
-                'status'      => 'to_do',
-                'priority'    => 'high',
-                'weight'      => 1.00,
-                'start_date'  => $validated['start_date'],
-                'due_date'    => $validated['due_date'],
-            ],
-            [
-                'name'        => 'Planning & Scheduling',
-                'description' => 'Buat rencana kerja, jadwal, dan pembagian tugas.',
-                'status'      => 'to_do',
-                'priority'    => 'medium',
-                'weight'      => 1.00,
-                'start_date'  => $validated['start_date'],
-                'due_date'    => $validated['due_date'],
-            ],
-            [
-                'name'        => 'Execution',
-                'description' => 'Pelaksanaan pekerjaan utama project.',
-                'status'      => 'to_do',
-                'priority'    => 'medium',
-                'weight'      => 1.00,
-                'start_date'  => $validated['start_date'],
-                'due_date'    => $validated['due_date'],
-            ],
-            [
-                'name'        => 'Review & Testing',
-                'description' => 'Evaluasi hasil dan pengujian sebelum selesai.',
-                'status'      => 'to_do',
-                'priority'    => 'medium',
-                'weight'      => 1.00,
-                'start_date'  => $validated['start_date'],
-                'due_date'    => $validated['due_date'],
-            ],
-            [
-                'name'        => 'Project Closing',
-                'description' => 'Dokumentasi akhir, serah terima, dan penutupan project.',
-                'status'      => 'to_do',
-                'priority'    => 'low',
-                'weight'      => 1.00,
-                'start_date'  => $validated['due_date'],
-                'due_date'    => $validated['due_date'],
-            ],
-        ];
+            $workspaceOwner = User::find($workspace->created_by);
+            if ($workspaceOwner && $workspaceOwner->id !== Auth::id()) {
+                $project->members()->attach($workspaceOwner->id, [
+                    'role' => 'manager',
+                    'joined_at' => now(),
+                ]);
+            }
 
-        foreach ($defaultTasks as $taskData) {
-            $project->tasks()->create([
-                'name'        => $taskData['name'],
-                'description' => $taskData['description'],
-                'status'      => $taskData['status'],
-                'priority'    => $taskData['priority'],
-                'weight'      => $taskData['weight'],
-                'start_date'  => $taskData['start_date'],
-                'due_date'    => $taskData['due_date'],
-                'created_by'  => Auth::id(),
-                'project_id'  => $project->id,
+            $defaultTasks = [
+                [
+                    'name' => 'Project Kickoff',
+                    'description' => 'Mulai project, perkenalan tim, dan briefing awal.',
+                    'status' => 'to_do',
+                    'priority' => 'high',
+                    'weight' => 1.00,
+                    'start_date' => $validated['start_date'],
+                    'due_date' => $validated['start_date'],
+                ],
+                [
+                    'name' => 'Requirement Gathering',
+                    'description' => 'Kumpulkan semua kebutuhan dan spesifikasi project.',
+                    'status' => 'to_do',
+                    'priority' => 'high',
+                    'weight' => 1.00,
+                    'start_date' => $validated['start_date'],
+                    'due_date' => $validated['due_date'],
+                ],
+                [
+                    'name' => 'Planning & Scheduling',
+                    'description' => 'Buat rencana kerja, jadwal, dan pembagian tugas.',
+                    'status' => 'to_do',
+                    'priority' => 'medium',
+                    'weight' => 1.00,
+                    'start_date' => $validated['start_date'],
+                    'due_date' => $validated['due_date'],
+                ],
+                [
+                    'name' => 'Execution',
+                    'description' => 'Pelaksanaan pekerjaan utama project.',
+                    'status' => 'to_do',
+                    'priority' => 'medium',
+                    'weight' => 1.00,
+                    'start_date' => $validated['start_date'],
+                    'due_date' => $validated['due_date'],
+                ],
+                [
+                    'name' => 'Review & Testing',
+                    'description' => 'Evaluasi hasil dan pengujian sebelum selesai.',
+                    'status' => 'to_do',
+                    'priority' => 'medium',
+                    'weight' => 1.00,
+                    'start_date' => $validated['start_date'],
+                    'due_date' => $validated['due_date'],
+                ],
+                [
+                    'name' => 'Project Closing',
+                    'description' => 'Dokumentasi akhir, serah terima, dan penutupan project.',
+                    'status' => 'to_do',
+                    'priority' => 'low',
+                    'weight' => 1.00,
+                    'start_date' => $validated['due_date'],
+                    'due_date' => $validated['due_date'],
+                ],
+            ];
+
+            foreach ($defaultTasks as $taskData) {
+                $project->tasks()->create([
+                    'name' => $taskData['name'],
+                    'description' => $taskData['description'],
+                    'status' => $taskData['status'],
+                    'priority' => $taskData['priority'],
+                    'weight' => $taskData['weight'],
+                    'start_date' => $taskData['start_date'],
+                    'due_date' => $taskData['due_date'],
+                    'created_by' => Auth::id(),
+                    'project_id' => $project->id,
+                ]);
+            }
+
+            $projectProgressService->syncPlannedProgress($project);
+            $projectProgressService->recordActualProgress($project);
+
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'created',
+                'entity_type' => 'project',
+                'entity_id' => $project->id,
+                'description' => 'Membuat project: '.$project->name,
             ]);
-        }
 
-        ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'created',
-            'entity_type' => 'project',
-            'entity_id'   => $project->id,
-            'description' => 'Membuat project: ' . $project->name,
-        ]);
-
+            return $project;
+        });
 
         return redirect()->route('projects.show', $project->token)
             ->with('success', 'Project created! Template tasks have been added — edit them as needed.');

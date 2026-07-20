@@ -18,6 +18,10 @@ use Carbon\Carbon;
 use App\Jobs\SendEmailNotification;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class TaskController extends Controller
 {
@@ -27,11 +31,34 @@ class TaskController extends Controller
         return Task::where('token', $token)->firstOrFail();
     }
 
+    private function wouldCreateCircularDependency(Task $task, int $predecessorId): bool
+    {
+        $visitedTaskIds = [];
+        $currentTaskId = $predecessorId;
+
+        while ($currentTaskId !== null) {
+            if ($currentTaskId === $task->id) {
+                return true;
+            }
+
+            if (isset($visitedTaskIds[$currentTaskId])) {
+                return true;
+            }
+
+            $visitedTaskIds[$currentTaskId] = true;
+            $nextPredecessorId = Task::query()->whereKey($currentTaskId)->where('project_id', $task->project_id)->value('predecessor_id');
+
+            $currentTaskId = $nextPredecessorId === null ? null : (int) $nextPredecessorId;
+        }
+
+        return false;
+    }
+
     public function index(Request $request)
     {
-        $user   = Auth::user();
+        $user = Auth::user();
         app(DashboardController::class)->sendDeadlineNotificationsPublic($user);
-        $view   = $request->get('view', 'list');
+        $view = $request->get('view', 'list');
         $status = $request->get('status', 'all');
 
         $query = Task::query()
@@ -46,12 +73,12 @@ class TaskController extends Controller
 
         $tasks = $query->orderByRaw("FIELD(priority, 'urgent') DESC")->latest()->get();
         $kanbanStatuses = [
-            'to_do'       => 'To Do',
+            'to_do' => 'To Do',
             'in_progress' => 'In Progress',
-            'review'      => 'Review',
-            'completed'   => 'Completed',
-            'stopped'     => 'Stopped',
-            'cancelled'   => 'Cancelled',
+            'review' => 'Review',
+            'completed' => 'Completed',
+            'stopped' => 'Stopped',
+            'cancelled' => 'Cancelled',
         ];
         $kanbanTasks = $tasks->groupBy('status');
 
@@ -61,7 +88,7 @@ class TaskController extends Controller
     public function create(Request $request)
     {
         $projectToken = $request->query('project_token');
-        $project      = null;
+        $project = null;
 
         if ($projectToken) {
             $project = Project::where('token', $projectToken)->firstOrFail();
@@ -70,7 +97,10 @@ class TaskController extends Controller
             }
         }
 
-        $projects  = Auth::user()->projects()->wherePivotIn('role', ['manager', 'member'])->get();
+        $projects = Auth::user()
+            ->projects()
+            ->wherePivotIn('role', ['manager', 'member'])
+            ->get();
         $assignees = $project ? $project->members : collect();
 
         return view('tasks.create', compact('projects', 'project', 'assignees'));
@@ -78,21 +108,31 @@ class TaskController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'project_id'     => 'required|exists:projects,id',
-            'parent_task_id' => 'nullable|exists:tasks,id',
-            'name'           => 'required|string|max:500',
-            'description'    => 'nullable|string',
-            'assignee_ids'   => 'nullable|array',
-            'assignee_ids.*' => 'exists:users,id',
-            'status'         => 'required|in:to_do,in_progress,review,completed,stopped,cancelled',
-            'priority'       => 'required|in:low,medium,high,urgent',
-            'weight'         => 'required|numeric|min:0.01',
-            'start_date'     => 'nullable|date',
-            'due_date'        => 'nullable|date|after_or_equal:start_date',
-            'predecessor_id'  => 'nullable|exists:tasks,id',
-            'dependency_type' => 'nullable|in:FS,SS,FF,SF',
-        ]);
+        $projectId = $request->integer('project_id');
+
+        $validated = $request->validate(
+            [
+                'project_id' => ['required', 'exists:projects,id'],
+                'parent_task_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $projectId))],
+                'name' => ['required', 'string', 'max:500'],
+                'description' => ['nullable', 'string'],
+                'assignee_ids' => ['nullable', 'array'],
+                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn($query) => $query->where('project_id', $projectId))],
+                'status' => ['required', 'in:to_do,in_progress,review,completed,stopped,cancelled'],
+                'priority' => ['required', 'in:low,medium,high,urgent'],
+                'weight' => ['required', 'numeric', 'min:0.01'],
+                'start_date' => ['nullable', 'date'],
+                'due_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+                'predecessor_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $projectId))],
+                'dependency_type' => ['nullable', 'in:FS,SS,FF,SF'],
+            ],
+            [
+                'parent_task_id.exists' => 'The parent task must belong to the selected project.',
+                'predecessor_id.exists' => 'The predecessor must belong to the selected project.',
+                'assignee_ids.*.distinct' => 'Each assignee may only be selected once.',
+                'assignee_ids.*.exists' => 'Each assignee must be a member of the selected project.',
+            ],
+        );
 
         $project = Project::findOrFail($validated['project_id']);
         if (!$project->canContribute(Auth::user())) {
@@ -102,58 +142,53 @@ class TaskController extends Controller
         DB::beginTransaction();
         try {
             $task = Task::create([
-                'project_id'     => $validated['project_id'],
+                'project_id' => $validated['project_id'],
                 'parent_task_id' => $validated['parent_task_id'] ?? null,
-                'name'           => $validated['name'],
-                'description'    => $validated['description'],
-                'status'         => $validated['status'],
-                'priority'       => $validated['priority'],
-                'weight'         => $validated['weight'],
-                'start_date'     => $validated['start_date'],
-                'due_date'       => $validated['due_date'],
-                'predecessor_id'  => $validated['predecessor_id'] ?? null,
+                'name' => $validated['name'],
+                'description' => $validated['description'],
+                'status' => $validated['status'],
+                'priority' => $validated['priority'],
+                'weight' => $validated['weight'],
+                'start_date' => $validated['start_date'],
+                'due_date' => $validated['due_date'],
+                'predecessor_id' => $validated['predecessor_id'] ?? null,
                 'dependency_type' => $validated['dependency_type'] ?? 'FS',
-                'created_by'     => Auth::id(),
+                'created_by' => Auth::id(),
             ]);
 
-            $assigneeIds = $request->input('assignee_ids', []);
+            $assigneeIds = $validated['assignee_ids'] ?? [];
             $task->assignees()->sync($assigneeIds);
 
             TaskStatusHistory::create([
-                'task_id'     => $task->id,
+                'task_id' => $task->id,
                 'from_status' => null,
-                'to_status'   => $validated['status'],
-                'changed_by'  => Auth::id(),
+                'to_status' => $validated['status'],
+                'changed_by' => Auth::id(),
             ]);
 
             ActivityLog::create([
-                'user_id'     => Auth::id(),
-                'action'      => 'created',
+                'user_id' => Auth::id(),
+                'action' => 'created',
                 'entity_type' => 'task',
-                'entity_id'   => $task->id,
+                'entity_id' => $task->id,
                 'description' => 'Created task: ' . $task->name,
             ]);
 
             foreach ($assigneeIds as $assigneeId) {
                 if ($assigneeId != Auth::id()) {
                     Notification::create([
-                        'user_id'    => $assigneeId,
-                        'type'       => 'assignment',
-                        'title'      => 'Task Baru Ditugaskan',
-                        'message'    => 'Anda mendapat task baru: "' . $task->name . '" di project ' . $project->name,
-                        'task_id'    => $task->id,
+                        'user_id' => $assigneeId,
+                        'type' => 'assignment',
+                        'title' => 'Task Baru Ditugaskan',
+                        'message' => 'Anda mendapat task baru: "' . $task->name . '" di project ' . $project->name,
+                        'task_id' => $task->id,
                         'project_id' => $project->id,
                     ]);
 
                     // Kirim email via Job
                     $recipient = User::find($assigneeId);
                     if ($recipient) {
-                        SendEmailNotification::dispatch(
-                            $recipient,
-                            'Task Baru Ditugaskan',
-                            'Anda mendapat task baru: "' . $task->name . '" di project ' . $project->name,
-                            route('tasks.show', $task->token),
-                        );
+                        SendEmailNotification::dispatch($recipient, 'Task Baru Ditugaskan', 'Anda mendapat task baru: "' . $task->name . '" di project ' . $project->name, route('tasks.show', $task->token));
                     }
                 }
             }
@@ -162,12 +197,7 @@ class TaskController extends Controller
                 foreach ($assigneeIds as $assigneeId) {
                     $assignee = User::find($assigneeId);
                     if ($assignee) {
-                        SendEmailNotification::dispatch(
-                            $assignee,
-                            'Urgent Task Alert',
-                            'Task "' . $task->name . '" is marked as urgent and needs immediate attention!',
-                            route('tasks.show', $task->token),
-                        );
+                        SendEmailNotification::dispatch($assignee, 'Urgent Task Alert', 'Task "' . $task->name . '" is marked as urgent and needs immediate attention!', route('tasks.show', $task->token));
                     }
                 }
             }
@@ -176,11 +206,12 @@ class TaskController extends Controller
 
             DB::commit();
 
-            return redirect()->route('projects.show', $project->token)
-                ->with('success', 'Task created successfully!');
+            return redirect()->route('projects.show', $project->token)->with('success', 'Task created successfully!');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Failed to create task: ' . $e->getMessage()])->withInput();
+            return back()
+                ->withErrors(['error' => 'Failed to create task: ' . $e->getMessage()])
+                ->withInput();
         }
     }
 
@@ -199,7 +230,7 @@ class TaskController extends Controller
 
         session(['task_back_url' => url()->previous()]);
 
-        $projects  = Auth::user()->projects;
+        $projects = Auth::user()->projects;
         $assignees = $task->project->members;
         $back_url = url()->previous();
 
@@ -215,20 +246,10 @@ class TaskController extends Controller
             abort(403, 'You do not have access to this task.');
         }
 
-        $task->load([
-            'project.workspace',
-            'assignee',
-            'creator',
-            'statusWeight',
-            'subtasks.assignee',
-            'comments.user',
-            'attachments.uploader',
-            'statusHistory.changer',
-        ]);
+        $task->load(['project.workspace', 'assignee', 'creator', 'statusWeight', 'subtasks.assignee', 'comments.user', 'attachments.uploader', 'statusHistory.changer']);
 
         // Deteksi dari mana task diakses
-        $fromMyTask = str_contains(url()->previous(), '/tasks')
-            && !str_contains(url()->previous(), '/projects');
+        $fromMyTask = str_contains(url()->previous(), '/tasks') && !str_contains(url()->previous(), '/projects');
 
         return view('tasks.show', compact('task', 'fromMyTask'));
     }
@@ -241,75 +262,99 @@ class TaskController extends Controller
             abort(403, 'Viewer can only view this task.');
         }
 
-        $validated = $request->validate([
-            'name'           => 'required|string|max:500',
-            'description'    => 'nullable|string',
-            'assignee_ids'   => 'nullable|array',
-            'assignee_ids.*' => 'exists:users,id',
-            'status'         => 'required|in:to_do,in_progress,review,completed,stopped,cancelled',
-            'priority'       => 'required|in:low,medium,high,urgent',
-            'weight'         => 'required|numeric|min:0.01',
-            'start_date'     => 'nullable|date',
-            'due_date'       => 'nullable|date|after_or_equal:start_date',
-            'predecessor_id'  => 'nullable|exists:tasks,id',
-            'dependency_type' => 'nullable|in:FS,SS,FF,SF',
-        ]);
+        $validator = Validator::make(
+            $request->all(),
+            [
+                'parent_task_id' => ['prohibited'],
+                'name' => ['required', 'string', 'max:500'],
+                'description' => ['nullable', 'string'],
+                'assignee_ids' => ['nullable', 'array'],
+                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn($query) => $query->where('project_id', $task->project_id))],
+                'status' => ['required', 'in:to_do,in_progress,review,completed,stopped,cancelled'],
+                'priority' => ['required', 'in:low,medium,high,urgent'],
+                'weight' => ['required', 'numeric', 'min:0.01'],
+                'start_date' => ['nullable', 'date'],
+                'due_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+                'predecessor_id' => ['nullable', Rule::notIn([$task->id]), Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $task->project_id))],
+                'dependency_type' => ['nullable', 'in:FS,SS,FF,SF'],
+            ],
+            [
+                'parent_task_id.prohibited' => 'The parent task cannot be changed.',
+                'predecessor_id.not_in' => 'A task cannot be its own predecessor.',
+                'predecessor_id.exists' => 'The predecessor must belong to the same project.',
+                'assignee_ids.*.distinct' => 'Each assignee may only be selected once.',
+                'assignee_ids.*.exists' => 'Each assignee must be a member of the task project.',
+            ],
+        );
+
+        $validator->after(function (\Illuminate\Validation\Validator $validator) use ($request, $task): void {
+            if (!$request->filled('predecessor_id') || $validator->errors()->has('predecessor_id')) {
+                return;
+            }
+
+            if ($this->wouldCreateCircularDependency($task, $request->integer('predecessor_id'))) {
+                $validator->errors()->add('predecessor_id', 'The selected predecessor creates a circular dependency.');
+            }
+        });
+
+        $validated = $validator->validate();
 
         DB::beginTransaction();
         try {
-            $oldStatus      = $task->status;
+            $oldStatus = $task->status;
             $oldAssigneeIds = $task->assignees->pluck('id')->toArray();
-            $changes        = [];
+            $changes = [];
 
             foreach ($validated as $key => $value) {
-                if ($key === 'assignee_ids') continue;
+                if ($key === 'assignee_ids') {
+                    continue;
+                }
                 if ($task->{$key} != $value) {
                     $changes[$key] = ['old' => $task->{$key}, 'new' => $value];
                 }
             }
 
-            $task->update(array_merge(
-                collect($validated)->except(['assignee_ids'])->toArray(),
-                [
-                    'predecessor_id'  => $request->filled('predecessor_id') ? (int) $request->input('predecessor_id') : null,
-                    'dependency_type' => $request->input('dependency_type', 'FS'),
-                ]
-            ));
+            $task->update(
+                array_merge(
+                    collect($validated)
+                        ->except(['assignee_ids', 'parent_task_id', 'predecessor_id', 'dependency_type'])
+                        ->toArray(),
+                    [
+                        'predecessor_id' => $validated['predecessor_id'] ?? null,
+                        'dependency_type' => $validated['dependency_type'] ?? 'FS',
+                    ],
+                ),
+            );
 
-            $newAssigneeIds = $request->input('assignee_ids', []);
+            $newAssigneeIds = $validated['assignee_ids'] ?? [];
             $task->assignees()->sync($newAssigneeIds);
 
             $addedAssignees = array_diff($newAssigneeIds, $oldAssigneeIds);
             foreach ($addedAssignees as $assigneeId) {
                 if ($assigneeId != Auth::id()) {
                     Notification::create([
-                        'user_id'    => $assigneeId,
-                        'type'       => 'assignment',
-                        'title'      => 'Task Ditugaskan ke Anda',
-                        'message'    => 'Anda ditugaskan ke task: "' . $task->name . '" di project ' . $task->project->name,
-                        'task_id'    => $task->id,
+                        'user_id' => $assigneeId,
+                        'type' => 'assignment',
+                        'title' => 'Task Ditugaskan ke Anda',
+                        'message' => 'Anda ditugaskan ke task: "' . $task->name . '" di project ' . $task->project->name,
+                        'task_id' => $task->id,
                         'project_id' => $task->project_id,
                     ]);
 
                     // Kirim email via Job
                     $recipient = User::find($assigneeId);
                     if ($recipient) {
-                        SendEmailNotification::dispatch(
-                            $recipient,
-                            'Task Ditugaskan ke Anda',
-                            'Anda ditugaskan ke task: "' . $task->name . '" di project ' . $task->project->name,
-                            route('tasks.show', $task->token),
-                        );
+                        SendEmailNotification::dispatch($recipient, 'Task Ditugaskan ke Anda', 'Anda ditugaskan ke task: "' . $task->name . '" di project ' . $task->project->name, route('tasks.show', $task->token));
                     }
                 }
             }
 
             if ($oldStatus != $validated['status']) {
                 TaskStatusHistory::create([
-                    'task_id'     => $task->id,
+                    'task_id' => $task->id,
                     'from_status' => $oldStatus,
-                    'to_status'   => $validated['status'],
-                    'changed_by'  => Auth::id(),
+                    'to_status' => $validated['status'],
+                    'changed_by' => Auth::id(),
                 ]);
 
                 if ($validated['status'] === 'stopped') {
@@ -318,60 +363,51 @@ class TaskController extends Controller
 
                     $task->update([
                         'stopped_progress' => $currentProgress,
-                        'completed_at'     => null,
+                        'completed_at' => null,
                     ]);
                 } elseif ($validated['status'] === 'completed') {
                     $task->update([
                         'stopped_progress' => null,
-                        'completed_at'     => now(),
+                        'completed_at' => now(),
                     ]);
                 } else {
                     $task->update([
                         'stopped_progress' => null,
-                        'completed_at'     => null,
+                        'completed_at' => null,
                     ]);
                 }
 
                 $notifMessage = 'Status task "' . $task->name . '" diubah dari ' . ucfirst(str_replace('_', ' ', $oldStatus)) . ' menjadi ' . ucfirst(str_replace('_', ' ', $validated['status']));
 
-                $recipients = collect($newAssigneeIds)
-                    ->push($task->created_by)
-                    ->filter()
-                    ->unique()
-                    ->reject(fn($id) => $id == Auth::id());
+                $recipients = collect($newAssigneeIds)->push($task->created_by)->filter()->unique()->reject(fn($id) => $id == Auth::id());
 
                 foreach ($recipients as $recipientId) {
                     Notification::create([
-                        'user_id'    => $recipientId,
-                        'type'       => 'status_change',
-                        'title'      => 'Status Task Berubah',
-                        'message'    => $notifMessage,
-                        'task_id'    => $task->id,
+                        'user_id' => $recipientId,
+                        'type' => 'status_change',
+                        'title' => 'Status Task Berubah',
+                        'message' => $notifMessage,
+                        'task_id' => $task->id,
                         'project_id' => $task->project_id,
                     ]);
 
                     // Kirim email via Job
                     $recipient = User::find($recipientId);
                     if ($recipient) {
-                        SendEmailNotification::dispatch(
-                            $recipient,
-                            'Status Task Berubah',
-                            $notifMessage,
-                            route('tasks.show', $task->token),
-                        );
+                        SendEmailNotification::dispatch($recipient, 'Status Task Berubah', $notifMessage, route('tasks.show', $task->token));
                     }
                 }
             }
 
             if (!empty($changes)) {
                 ActivityLog::create([
-                    'user_id'     => Auth::id(),
-                    'action'      => 'updated',
+                    'user_id' => Auth::id(),
+                    'action' => 'updated',
                     'entity_type' => 'task',
-                    'entity_id'   => $task->id,
+                    'entity_id' => $task->id,
                     'description' => 'Updated task: ' . $task->name,
-                    'old_value'   => json_encode($changes),
-                    'new_value'   => json_encode($changes),
+                    'old_value' => json_encode($changes),
+                    'new_value' => json_encode($changes),
                 ]);
             }
 
@@ -384,7 +420,9 @@ class TaskController extends Controller
             return redirect($backUrl)->with('success', 'Task updated successfully!');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Failed to update task: ' . $e->getMessage()])->withInput();
+            return back()
+                ->withErrors(['error' => 'Failed to update task: ' . $e->getMessage()])
+                ->withInput();
         }
     }
 
@@ -399,10 +437,10 @@ class TaskController extends Controller
         DB::beginTransaction();
         try {
             ActivityLog::create([
-                'user_id'     => Auth::id(),
-                'action'      => 'deleted',
+                'user_id' => Auth::id(),
+                'action' => 'deleted',
                 'entity_type' => 'task',
-                'entity_id'   => $task->id,
+                'entity_id' => $task->id,
                 'description' => 'Deleted task: ' . $task->name,
             ]);
 
@@ -415,9 +453,7 @@ class TaskController extends Controller
 
             DB::commit();
 
-            $backUrl = $request->input('back_url')
-                ?? session('task_back_url')
-                ?? route('projects.show', $projectToken);
+            $backUrl = $request->input('back_url') ?? (session('task_back_url') ?? route('projects.show', $projectToken));
 
             return redirect($backUrl)->with('success', 'Task deleted successfully!');
         } catch (\Exception $e) {
@@ -448,29 +484,29 @@ class TaskController extends Controller
                 $currentProgress = $previousWeight ? $previousWeight->weight_value * 100 : 0;
 
                 $task->update([
-                    'status'           => $request->status,
+                    'status' => $request->status,
                     'stopped_progress' => $currentProgress,
-                    'completed_at'     => null,
+                    'completed_at' => null,
                 ]);
             } elseif ($request->status === 'completed') {
                 $task->update([
-                    'status'           => $request->status,
+                    'status' => $request->status,
                     'stopped_progress' => null,
-                    'completed_at'     => now(),
+                    'completed_at' => now(),
                 ]);
             } else {
                 $task->update([
-                    'status'           => $request->status,
+                    'status' => $request->status,
                     'stopped_progress' => null,
-                    'completed_at'     => null,
+                    'completed_at' => null,
                 ]);
             }
 
             TaskStatusHistory::create([
-                'task_id'     => $task->id,
+                'task_id' => $task->id,
                 'from_status' => $oldStatus,
-                'to_status'   => $request->status,
-                'changed_by'  => Auth::id(),
+                'to_status' => $request->status,
+                'changed_by' => Auth::id(),
             ]);
 
             $notifMessage = 'Status task "' . $task->name . '" diubah dari ' . ucfirst(str_replace('_', ' ', $oldStatus)) . ' menjadi ' . ucfirst(str_replace('_', ' ', $request->status));
@@ -485,37 +521,31 @@ class TaskController extends Controller
 
             foreach ($recipients as $recipientId) {
                 Notification::create([
-                    'user_id'    => $recipientId,
-                    'type'       => 'status_change',
-                    'title'      => 'Status Task Berubah',
-                    'message'    => $notifMessage,
-                    'task_id'    => $task->id,
+                    'user_id' => $recipientId,
+                    'type' => 'status_change',
+                    'title' => 'Status Task Berubah',
+                    'message' => $notifMessage,
+                    'task_id' => $task->id,
                     'project_id' => $task->project_id,
                 ]);
 
                 // Kirim email via Job
                 $recipient = User::find($recipientId);
                 if ($recipient) {
-                    SendEmailNotification::dispatch(
-                        $recipient,
-                        'Status Task Berubah',
-                        $notifMessage,
-                        route('tasks.show', $task->token),
-                    );
+                    SendEmailNotification::dispatch($recipient, 'Status Task Berubah', $notifMessage, route('tasks.show', $task->token));
                 }
             }
-
 
             app(ProjectProgressService::class)->syncPlannedProgress($task->project);
             app(ProjectProgressService::class)->recordActualProgress($task->project);
             ActivityLog::create([
-                'user_id'     => Auth::id(),
-                'action'      => 'status_changed',
+                'user_id' => Auth::id(),
+                'action' => 'status_changed',
                 'entity_type' => 'task',
-                'entity_id'   => $task->id,
+                'entity_id' => $task->id,
                 'description' => 'Mengubah status task "' . $task->name . '" dari ' . $oldStatus . ' menjadi ' . $request->status,
-                'old_value'   => ['status' => $oldStatus],
-                'new_value'   => ['status' => $request->status],
+                'old_value' => ['status' => $oldStatus],
+                'new_value' => ['status' => $request->status],
             ]);
             DB::commit();
 
@@ -523,12 +553,7 @@ class TaskController extends Controller
             if ($request->status !== 'completed' && $task->priority === 'urgent') {
                 $task->load('assignees');
                 foreach ($task->assignees as $assignee) {
-                    SendEmailNotification::dispatch(
-                        $assignee,
-                        'Urgent Task Alert',
-                        'Task "' . $task->name . '" is marked as urgent and needs immediate attention!',
-                        route('tasks.show', $task->token),
-                    );
+                    SendEmailNotification::dispatch($assignee, 'Urgent Task Alert', 'Task "' . $task->name . '" is marked as urgent and needs immediate attention!', route('tasks.show', $task->token));
                 }
             }
 
@@ -561,16 +586,14 @@ class TaskController extends Controller
         ]);
 
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'commented',
+            'user_id' => Auth::id(),
+            'action' => 'commented',
             'entity_type' => 'comment',
-            'entity_id'   => $task->id,
+            'entity_id' => $task->id,
             'description' => 'Added comment on task: ' . $task->name,
         ]);
 
-        return redirect()->route('tasks.show', $token)
-            ->with('success', 'Comment added successfully.')
-            ->withFragment('comments');
+        return redirect()->route('tasks.show', $token)->with('success', 'Comment added successfully.')->withFragment('comments');
     }
 
     public function storeAttachment(Request $request, string $token)
@@ -589,45 +612,45 @@ class TaskController extends Controller
         $path = $file->store('task-attachments/' . $task->id, 'public');
 
         $attachment = TaskAttachment::create([
-            'task_id'     => $task->id,
+            'task_id' => $task->id,
             'uploaded_by' => Auth::id(),
-            'file_name'   => $file->getClientOriginalName(),
-            'file_path'   => $path,
-            'file_size'   => $file->getSize(),
-            'mime_type'   => $file->getMimeType(),
+            'file_name' => $file->getClientOriginalName(),
+            'file_path' => $path,
+            'file_size' => $file->getSize(),
+            'mime_type' => $file->getMimeType(),
         ]);
 
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'created',
+            'user_id' => Auth::id(),
+            'action' => 'created',
             'entity_type' => 'attachment',
-            'entity_id'   => $attachment->id,
+            'entity_id' => $attachment->id,
             'description' => 'Uploaded attachment for task: ' . $task->name,
         ]);
 
-        return redirect()->route('tasks.show', $token)
-            ->with('success', 'Attachment uploaded successfully.')
-            ->withFragment('documents');
+        return redirect()->route('tasks.show', $token)->with('success', 'Attachment uploaded successfully.')->withFragment('documents');
     }
 
-    public function downloadAttachment(string $token, TaskAttachment $attachment)
+    public function downloadAttachment(string $token, TaskAttachment $attachment): StreamedResponse
     {
         $task = $this->findByToken($token);
 
-        $isSuperAdmin = Auth::user()->isSuperAdmin();
-        if (!$isSuperAdmin && (!$task->project->isMember(Auth::user()) || $attachment->task_id !== $task->id)) {
+        /** @var User $user */
+        $user = Auth::user();
+
+        if (!$user->isSuperAdmin() && (!$task->project->isMember($user) || $attachment->task_id !== $task->id)) {
             abort(403, 'You do not have access to this attachment.');
         }
 
-        return Storage::disk('public')->download(
-            $attachment->file_path,
-            $attachment->file_name
-        );
+        /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+
+        return $disk->download($attachment->file_path, $attachment->file_name);
     }
 
     public function ganttData(Request $request)
     {
-        $user   = Auth::user();
+        $user = Auth::user();
         $status = $request->get('status', 'all');
 
         $query = Task::query()
@@ -647,15 +670,15 @@ class TaskController extends Controller
         $depTypeMap = ['FS' => 0, 'SS' => 1, 'FF' => 2, 'SF' => 3];
 
         $data = $tasks->map(function ($task) {
-            $start    = Carbon::parse($task->start_date);
-            $end      = Carbon::parse($task->due_date);
+            $start = Carbon::parse($task->start_date);
+            $end = Carbon::parse($task->due_date);
             $duration = max(1, $start->diffInDays($end));
 
             $progress = match ($task->status) {
-                'completed'   => 1,
-                'review'      => 0.8,
+                'completed' => 1,
+                'review' => 0.8,
                 'in_progress' => 0.5,
-                default       => 0,
+                default => 0,
             };
 
             $resource = '';
@@ -668,17 +691,17 @@ class TaskController extends Controller
             $isMilestone = $start->equalTo($end);
 
             $item = [
-                'id'              => $task->id,
-                'text'            => $task->name . ($task->project ? ' (' . $task->project->name . ')' : ''),
-                'start_date'      => $start->format('d-m-Y'),
-                'duration'        => $duration,
-                'progress'        => $progress,
-                'status'          => $task->status,
-                'priority'        => $task->priority,
-                'token'           => $task->token,
-                'predecessor_id'  => $task->predecessor_id,
+                'id' => $task->id,
+                'text' => $task->name . ($task->project ? ' (' . $task->project->name . ')' : ''),
+                'start_date' => $start->format('d-m-Y'),
+                'duration' => $duration,
+                'progress' => $progress,
+                'status' => $task->status,
+                'priority' => $task->priority,
+                'token' => $task->token,
+                'predecessor_id' => $task->predecessor_id,
                 'dependency_type' => $task->dependency_type ?? 'FS',
-                'resource'        => $resource,
+                'resource' => $resource,
             ];
 
             if ($task->parent_task_id) {
@@ -692,31 +715,27 @@ class TaskController extends Controller
             return $item;
         });
 
-        $links = $tasks->whereNotNull('predecessor_id')->values()->map(function ($task) use ($depTypeMap) {
-            return [
-                'id'     => $task->id,
-                'source' => $task->predecessor_id,
-                'target' => $task->id,
-                'type'   => (string)($depTypeMap[$task->dependency_type ?? 'FS'] ?? 0),
-            ];
-        });
+        $links = $tasks
+            ->whereNotNull('predecessor_id')
+            ->values()
+            ->map(function ($task) use ($depTypeMap) {
+                return [
+                    'id' => $task->id,
+                    'source' => $task->predecessor_id,
+                    'target' => $task->id,
+                    'type' => (string) ($depTypeMap[$task->dependency_type ?? 'FS'] ?? 0),
+                ];
+            });
 
         return response()->json([
-            'data'  => $data->values(),
+            'data' => $data->values(),
             'links' => $links->values(),
         ]);
     }
 
     public function tasksJson($id)
     {
-        $tasks = Task::where('project_id', $id)
-            ->select(
-                'id',
-                'name',
-                'start_date',
-                'due_date'
-            )
-            ->get();
+        $tasks = Task::where('project_id', $id)->select('id', 'name', 'start_date', 'due_date')->get();
 
         return response()->json($tasks);
     }
@@ -724,9 +743,7 @@ class TaskController extends Controller
     public function assigneesJson($id)
     {
         $project = Project::findOrFail($id);
-        return response()->json(
-            $project->members()->select('users.id', 'users.name', 'users.profile_photo')->get()
-        );
+        return response()->json($project->members()->select('users.id', 'users.name', 'users.profile_photo')->get());
     }
 
     public function markSeen(Request $request, string $token)

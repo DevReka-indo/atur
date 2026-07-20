@@ -10,7 +10,7 @@ Tujuan Project:
 - Fokus bisnisnya adalah kolaborasi project: user bergabung ke workspace, membuat project, mengatur anggota, membuat task bertingkat, memantau status/progress/S-curve, berkomentar, upload attachment, berdiskusi per project/thread, dan menerima notifikasi deadline/overload.
 
 Tech Stack:
-- Backend: PHP ^8.2, Laravel 13 (dikonfirmasi pengguna; catatan: metadata dependency di `composer.json` perlu diselaraskan bila masih mencantumkan versi Laravel berbeda).
+- Backend: PHP ^8.2, Laravel 12 (dikonfirmasi pengguna; catatan: metadata dependency di `composer.json` perlu diselaraskan bila masih mencantumkan versi Laravel berbeda).
 - Auth scaffold: Laravel Breeze.
 - OAuth: Laravel Socialite untuk Google login.
 - Frontend: Blade, Tailwind CSS 3, Alpine.js, Vite 7, Axios.
