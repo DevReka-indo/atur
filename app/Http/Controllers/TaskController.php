@@ -22,15 +22,12 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Illuminate\Support\Collection;
 use Throwable;
 
 class TaskController extends Controller
 {
-    public function __construct(
-        private TaskHierarchyService $taskHierarchyService,
-        private ProjectProgressService $projectProgressService,
-        private TaskGanttService $taskGanttService,
-    ) {}
+    public function __construct(private TaskHierarchyService $taskHierarchyService, private ProjectProgressService $projectProgressService, private TaskGanttService $taskGanttService) {}
 
     // task token
     private function findByToken(string $token): Task
@@ -61,47 +58,26 @@ class TaskController extends Controller
         return false;
     }
 
-    public function index(Request $request)
+    public function index(Request $request, TaskHierarchyService $taskHierarchyService)
     {
         $user = Auth::user();
+
         app(DashboardController::class)->sendDeadlineNotificationsPublic($user);
-        $view = $request->get('view', 'list');
-        $status = $request->get('status', 'all');
 
-        $query = Task::query()
-            ->with([
-                'project.workspace',
-                'assignees',
-                'assignee',
-                'statusWeight',
-                'parent:id,token,name,parent_task_id',
-                'parent.parent:id,token,name,parent_task_id',
-            ])
-            ->assignedToUser($user->id);
+        $view = $request->string('view', 'list')->toString();
+        $status = $request->string('status', 'all')->toString();
 
-        if ($view === 'kanban') {
-            $query->whereDoesntHave('subtasks');
-        } else {
-            $query->withCount('subtasks');
+        $allowedViews = ['list', 'gantt', 'kanban'];
+        $allowedStatuses = ['all', 'to_do', 'in_progress', 'review', 'completed', 'stopped', 'cancelled'];
+
+        if (!in_array($view, $allowedViews, true)) {
+            $view = 'list';
         }
 
-        if ($status !== 'all') {
-            $query->where('status', $status);
+        if (!in_array($status, $allowedStatuses, true)) {
+            $status = 'all';
         }
 
-        $tasks = $query->orderByRaw("FIELD(priority, 'urgent') DESC")->latest()->get();
-        if ($view === 'kanban') {
-            $contributableProjectIds = $user->isSuperAdmin()
-                ? $tasks->pluck('project_id')->unique()
-                : $user->projects()
-                    ->wherePivotIn('role', ['manager', 'member'])
-                    ->whereIn('projects.id', $tasks->pluck('project_id')->unique())
-                    ->pluck('projects.id');
-
-            $tasks->each(function (Task $task) use ($contributableProjectIds): void {
-                $task->setAttribute('kanban_can_contribute', $contributableProjectIds->contains($task->project_id));
-            });
-        }
         $kanbanStatuses = [
             'to_do' => 'To Do',
             'in_progress' => 'In Progress',
@@ -110,10 +86,333 @@ class TaskController extends Controller
             'stopped' => 'Stopped',
             'cancelled' => 'Cancelled',
         ];
-        $kanbanTasks = $tasks->groupBy('status');
 
-        return view('tasks.index', compact('tasks', 'view', 'kanbanStatuses', 'kanbanTasks'));
+        $statusOptions = collect($kanbanStatuses)
+            ->map(
+                fn(string $label, string $value): array => [
+                    'value' => $value,
+                    'label' => $label,
+                ],
+            )
+            ->values()
+            ->all();
+
+        $tasks = collect();
+        $taskTree = collect();
+        $kanbanTasks = collect();
+
+        /*
+    |--------------------------------------------------------------------------
+    | Kanban
+    |--------------------------------------------------------------------------
+    |
+    | Kanban hanya menampilkan executable leaf task.
+    |
+    */
+        if ($view === 'kanban') {
+            $query = Task::query()
+                ->with(['project.workspace', 'assignees', 'assignee', 'statusWeight', 'parent:id,token,name,parent_task_id', 'parent.parent:id,token,name,parent_task_id'])
+                ->assignedToUser($user->id)
+                ->whereDoesntHave('subtasks');
+
+            if ($status !== 'all') {
+                $query->where('status', $status);
+            }
+
+            $tasks = $query->orderByRaw("FIELD(priority, 'urgent') DESC")->latest()->get();
+
+            $taskProjectIds = $tasks->pluck('project_id')->filter()->unique()->values();
+
+            $contributableProjectIds = $user->isSuperAdmin()
+                ? $taskProjectIds
+                : $user
+                    ->projects()
+                    ->wherePivotIn('role', ['manager', 'member'])
+                    ->whereIn('projects.id', $taskProjectIds)
+                    ->pluck('projects.id');
+
+            $tasks->each(function (Task $task) use ($contributableProjectIds): void {
+                $task->setAttribute('kanban_can_contribute', $contributableProjectIds->contains($task->project_id));
+            });
+
+            $kanbanTasks = $tasks->groupBy('status');
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | List
+    |--------------------------------------------------------------------------
+    |
+    | List menampilkan task milik user dalam bentuk tree.
+    | Ancestor tetap ditampilkan sebagai context meskipun bukan assignee.
+    |
+    */
+        if ($view === 'list') {
+            $assignedTaskQuery = Task::query()
+                ->with(['parent:id,token,name,parent_task_id', 'parent.parent:id,token,name,parent_task_id'])
+                ->assignedToUser($user->id);
+
+            if ($status !== 'all') {
+                $assignedTaskQuery->where('status', $status);
+            }
+
+            $assignedTasks = $assignedTaskQuery->get();
+
+            $assignedTaskIds = $assignedTasks->pluck('id')->unique()->values();
+
+            $ancestorIds = $assignedTasks
+                ->flatMap(function (Task $task): array {
+                    return [$task->parent_task_id, $task->parent?->parent_task_id];
+                })
+                ->filter()
+                ->unique()
+                ->values();
+
+            $visibleTaskIds = $assignedTaskIds->merge($ancestorIds)->unique()->values();
+
+            if ($visibleTaskIds->isNotEmpty()) {
+                $tasks = Task::query()
+                    ->with(['project.workspace', 'assignees', 'assignee', 'statusWeight', 'statusHistory', 'parent:id,token,name,parent_task_id', 'parent.parent:id,token,name,parent_task_id', 'subtasks' => fn($query) => $query->with(['statusWeight', 'statusHistory', 'subtasks.statusWeight', 'subtasks.statusHistory'])->orderBy('created_at'), 'subtasks.subtasks' => fn($query) => $query->with(['statusWeight', 'statusHistory'])->orderBy('created_at')])
+                    ->withCount('subtasks')
+                    ->whereIn('id', $visibleTaskIds)
+                    ->get();
+
+                $projectIds = $tasks->pluck('project_id')->filter()->unique()->values();
+
+                $contributableProjectIds = $user->isSuperAdmin()
+                    ? $projectIds
+                    : $user
+                        ->projects()
+                        ->wherePivotIn('role', ['manager', 'member'])
+                        ->whereIn('projects.id', $projectIds)
+                        ->pluck('projects.id');
+
+                $manageableProjectIds = $user->isSuperAdmin() ? $projectIds : $user->projects()->wherePivot('role', 'manager')->whereIn('projects.id', $projectIds)->pluck('projects.id');
+
+                $assignedTaskIdLookup = $assignedTaskIds->flip();
+
+                $tasks->each(function (Task $task) use ($assignedTaskIdLookup, $contributableProjectIds, $manageableProjectIds): void {
+                    $task->setAttribute('my_task_is_assigned', $assignedTaskIdLookup->has($task->id));
+
+                    $task->setAttribute('my_task_is_context', !$assignedTaskIdLookup->has($task->id));
+
+                    $task->setAttribute('my_task_can_contribute', $contributableProjectIds->contains($task->project_id));
+
+                    $task->setAttribute('my_task_can_manage', $manageableProjectIds->contains($task->project_id));
+                });
+
+                $taskTree = $this->buildMyTaskTree(tasks: $tasks, taskHierarchyService: $taskHierarchyService);
+            }
+        }
+
+        return view('tasks.index', [
+            'tasks' => $tasks,
+            'taskTree' => $taskTree,
+            'view' => $view,
+            'currentStatus' => $status,
+            'kanbanStatuses' => $kanbanStatuses,
+            'kanbanTasks' => $kanbanTasks,
+            'statusOptions' => $statusOptions,
+        ]);
     }
+    // public function index(Request $request)
+    // {
+    //     $user = Auth::user();
+    //     app(DashboardController::class)->sendDeadlineNotificationsPublic($user);
+    //     $view = $request->get('view', 'list');
+    //     $status = $request->get('status', 'all');
+
+    //     $query = Task::query()
+    //         ->with([
+    //             'project.workspace',
+    //             'assignees',
+    //             'assignee',
+    //             'statusWeight',
+    //             'parent:id,token,name,parent_task_id',
+    //             'parent.parent:id,token,name,parent_task_id',
+    //         ])
+    //         ->assignedToUser($user->id);
+
+    //     if ($view === 'kanban') {
+    //         $query->whereDoesntHave('subtasks');
+    //     } else {
+    //         $query->withCount('subtasks');
+    //     }
+
+    //     if ($status !== 'all') {
+    //         $query->where('status', $status);
+    //     }
+
+    //     $tasks = $query->orderByRaw("FIELD(priority, 'urgent') DESC")->latest()->get();
+    //     if ($view === 'kanban') {
+    //         $contributableProjectIds = $user->isSuperAdmin()
+    //             ? $tasks->pluck('project_id')->unique()
+    //             : $user->projects()
+    //                 ->wherePivotIn('role', ['manager', 'member'])
+    //                 ->whereIn('projects.id', $tasks->pluck('project_id')->unique())
+    //                 ->pluck('projects.id');
+
+    //         $tasks->each(function (Task $task) use ($contributableProjectIds): void {
+    //             $task->setAttribute('kanban_can_contribute', $contributableProjectIds->contains($task->project_id));
+    //         });
+    //     }
+    //     $kanbanStatuses = [
+    //         'to_do' => 'To Do',
+    //         'in_progress' => 'In Progress',
+    //         'review' => 'Review',
+    //         'completed' => 'Completed',
+    //         'stopped' => 'Stopped',
+    //         'cancelled' => 'Cancelled',
+    //     ];
+    //     $kanbanTasks = $tasks->groupBy('status');
+
+    //     return view('tasks.index', compact('tasks', 'view', 'kanbanStatuses', 'kanbanTasks'));
+    // }
+private function buildMyTaskTree(
+    Collection $tasks,
+    TaskHierarchyService $taskHierarchyService
+): Collection {
+    $taskLookup = $tasks->keyBy('id');
+
+    $childrenByParent = $tasks
+        ->groupBy(fn (Task $task): int|string => $task->parent_task_id ?? 'root');
+
+    $rootTasks = $tasks
+        ->filter(function (Task $task) use ($taskLookup): bool {
+            return $task->parent_task_id === null
+                || ! $taskLookup->has($task->parent_task_id);
+        });
+
+    return $this->sortMyTaskCollection($rootTasks)
+        ->map(function (Task $task) use (
+            $childrenByParent,
+            $taskHierarchyService
+        ): array {
+            return $this->buildMyTaskTreeNode(
+                task: $task,
+                childrenByParent: $childrenByParent,
+                taskHierarchyService: $taskHierarchyService,
+                level: 0,
+                visitedTaskIds: []
+            );
+        })
+        ->values();
+}
+
+private function buildMyTaskTreeNode(
+    Task $task,
+    Collection $childrenByParent,
+    TaskHierarchyService $taskHierarchyService,
+    int $level,
+    array $visitedTaskIds
+): array {
+    if (in_array($task->id, $visitedTaskIds, true)) {
+        return [
+            'task' => $task,
+            'children' => collect(),
+            'level' => $level,
+            'context_only' => (bool) $task->getAttribute('my_task_is_context'),
+            'is_assigned' => (bool) $task->getAttribute('my_task_is_assigned'),
+            'progress' => 0,
+            'leaf_count' => 0,
+            'completed_leaf_count' => 0,
+            'cycle_detected' => true,
+        ];
+    }
+
+    $visitedTaskIds[] = $task->id;
+
+    $visibleChildren = $childrenByParent->get($task->id, collect());
+
+    $childNodes = $this->sortMyTaskCollection($visibleChildren)
+        ->map(function (Task $child) use (
+            $childrenByParent,
+            $taskHierarchyService,
+            $level,
+            $visitedTaskIds
+        ): array {
+            return $this->buildMyTaskTreeNode(
+                task: $child,
+                childrenByParent: $childrenByParent,
+                taskHierarchyService: $taskHierarchyService,
+                level: $level + 1,
+                visitedTaskIds: $visitedTaskIds
+            );
+        })
+        ->values();
+
+    return [
+        'task' => $task,
+        'children' => $childNodes,
+        'level' => $level,
+        'context_only' => (bool) $task->getAttribute('my_task_is_context'),
+        'is_assigned' => (bool) $task->getAttribute('my_task_is_assigned'),
+        'progress' => round(
+            $taskHierarchyService->resolveProgressPercentage($task),
+            1
+        ),
+        'leaf_count' => $this->countHierarchyLeafTasks($task),
+        'completed_leaf_count' => $this->countCompletedHierarchyLeafTasks($task),
+        'cycle_detected' => false,
+    ];
+}
+
+private function sortMyTaskCollection(Collection $tasks): Collection
+{
+    $now = now();
+
+    return $tasks
+        ->sortBy(function (Task $task) use ($now): array {
+            $statusOrder = match ($task->status) {
+                'completed' => 2,
+                'cancelled' => 3,
+                default => 1,
+            };
+
+            $priorityOrder = match ($task->priority) {
+                'urgent' => 0,
+                'high' => 1,
+                'medium' => 2,
+                'low' => 3,
+                default => 4,
+            };
+
+            $dueDateOrder = $task->due_date
+                ? $now->diffInMinutes($task->due_date, false)
+                : PHP_INT_MAX;
+
+            return [
+                $statusOrder,
+                $priorityOrder,
+                $dueDateOrder,
+                $task->created_at?->timestamp ?? 0,
+            ];
+        })
+        ->values();
+}
+
+private function countHierarchyLeafTasks(Task $task): int
+{
+    if ($task->subtasks->isEmpty()) {
+        return 1;
+    }
+
+    return $task->subtasks->sum(
+        fn (Task $child): int => $this->countHierarchyLeafTasks($child)
+    );
+}
+
+private function countCompletedHierarchyLeafTasks(Task $task): int
+{
+    if ($task->subtasks->isEmpty()) {
+        return $task->status === 'completed' ? 1 : 0;
+    }
+
+    return $task->subtasks->sum(
+        fn (Task $child): int => $this->countCompletedHierarchyLeafTasks($child)
+    );
+}
+
 
     public function create(Request $request)
     {
@@ -133,7 +432,7 @@ class TaskController extends Controller
                 ->firstOrFail();
             $project = $parentTask->project;
 
-            if (! $project->canContribute(Auth::user())) {
+            if (!$project->canContribute(Auth::user())) {
                 abort(403, 'Only manager/member can create subtasks.');
             }
 
@@ -146,7 +445,7 @@ class TaskController extends Controller
             $remainingSubtaskWeight = max(0, round(100 - $usedSubtaskWeight, 2));
         } elseif ($projectToken) {
             $project = Project::where('token', $projectToken)->firstOrFail();
-            if (! $project->canContribute(Auth::user())) {
+            if (!$project->canContribute(Auth::user())) {
                 abort(403, 'Only manager/member can create tasks.');
             }
         }
@@ -157,15 +456,7 @@ class TaskController extends Controller
             ->get();
         $assignees = $project ? $project->members : collect();
 
-        return view('tasks.create', compact(
-            'projects',
-            'project',
-            'assignees',
-            'parentTask',
-            'parentDepth',
-            'usedSubtaskWeight',
-            'remainingSubtaskWeight',
-        ));
+        return view('tasks.create', compact('projects', 'project', 'assignees', 'parentTask', 'parentDepth', 'usedSubtaskWeight', 'remainingSubtaskWeight'));
     }
 
     public function store(Request $request)
@@ -176,24 +467,18 @@ class TaskController extends Controller
             $request->all(),
             [
                 'project_id' => ['required', 'exists:projects,id'],
-                'parent_task_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn ($query) => $query->where('project_id', $projectId))],
+                'parent_task_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $projectId))],
                 'name' => ['required', 'string', 'max:500'],
                 'description' => ['nullable', 'string'],
                 'assignee_ids' => ['nullable', 'array'],
-                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn ($query) => $query->where('project_id', $projectId))],
+                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn($query) => $query->where('project_id', $projectId))],
                 'status' => ['required', 'in:to_do,in_progress,review,completed,stopped,cancelled'],
                 'priority' => ['required', 'in:low,medium,high,urgent'],
                 'weight' => ['required', 'numeric', 'min:0.01'],
-                'subtask_weight_percentage' => [
-                    $request->filled('parent_task_id') ? 'required' : 'prohibited',
-                    'nullable',
-                    'numeric',
-                    'gt:0',
-                    'lte:100',
-                ],
+                'subtask_weight_percentage' => [$request->filled('parent_task_id') ? 'required' : 'prohibited', 'nullable', 'numeric', 'gt:0', 'lte:100'],
                 'start_date' => ['nullable', 'date'],
                 'due_date' => ['nullable', 'date', 'after_or_equal:start_date'],
-                'predecessor_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn ($query) => $query->where('project_id', $projectId))],
+                'predecessor_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $projectId))],
                 'dependency_type' => ['nullable', 'in:FS,SS,FF,SF'],
             ],
             [
@@ -235,7 +520,7 @@ class TaskController extends Controller
         $validated = $validator->validate();
 
         $project = Project::findOrFail($validated['project_id']);
-        if (! $project->canContribute(Auth::user())) {
+        if (!$project->canContribute(Auth::user())) {
             abort(403, 'Only manager/member can create tasks.');
         }
 
@@ -254,7 +539,7 @@ class TaskController extends Controller
                 $this->taskHierarchyService->validateSubtaskWeight($context);
                 $this->taskHierarchyService->validateStatusTransition($context, $validated['status']);
 
-                if (! empty($validated['predecessor_id'])) {
+                if (!empty($validated['predecessor_id'])) {
                     $predecessor = Task::query()->lockForUpdate()->findOrFail($validated['predecessor_id']);
                     $this->taskHierarchyService->validatePredecessorCandidate($context, $predecessor);
                 }
@@ -290,12 +575,12 @@ class TaskController extends Controller
                     'action' => 'created',
                     'entity_type' => 'task',
                     'entity_id' => $task->id,
-                    'description' => 'Created task: '.$task->name,
+                    'description' => 'Created task: ' . $task->name,
                 ]);
 
                 foreach ($assigneeIds as $assigneeId) {
                     if ($assigneeId != Auth::id()) {
-                        $message = 'Anda mendapat task baru: "'.$task->name.'" di project '.$project->name;
+                        $message = 'Anda mendapat task baru: "' . $task->name . '" di project ' . $project->name;
                         Notification::create([
                             'user_id' => $assigneeId,
                             'type' => 'assignment',
@@ -316,7 +601,7 @@ class TaskController extends Controller
                     foreach ($assigneeIds as $assigneeId) {
                         $assignee = User::find($assigneeId);
                         if ($assignee) {
-                            $this->queueEmailAfterCommit($assignee, 'Urgent Task Alert', 'Task "'.$task->name.'" is marked as urgent and needs immediate attention!', $task);
+                            $this->queueEmailAfterCommit($assignee, 'Urgent Task Alert', 'Task "' . $task->name . '" is marked as urgent and needs immediate attention!', $task);
                         }
                     }
                 }
@@ -336,7 +621,7 @@ class TaskController extends Controller
             throw $exception;
         } catch (Throwable $e) {
             return back()
-                ->withErrors(['error' => 'Failed to create task: '.$e->getMessage()])
+                ->withErrors(['error' => 'Failed to create task: ' . $e->getMessage()])
                 ->withInput();
         }
     }
@@ -347,11 +632,11 @@ class TaskController extends Controller
         $task->load(['project.workspace', 'assignees', 'assignee', 'parent.parent', 'subtasks']);
         $task->loadCount('subtasks');
 
-        if (! $task->project) {
+        if (!$task->project) {
             abort(404, 'Task tidak memiliki project.');
         }
 
-        if (! $task->project->canContribute(Auth::user())) {
+        if (!$task->project->canContribute(Auth::user())) {
             abort(403, 'Viewer can only view this task.');
         }
 
@@ -361,33 +646,13 @@ class TaskController extends Controller
         $assignees = $task->project->members;
         $back_url = url()->previous();
         $taskDepth = $this->taskHierarchyService->hierarchyDepth($task);
-        $siblingWeightWithoutTask = $task->parent_task_id === null
-            ? 0.0
-            : round((float) Task::query()
-                ->where('parent_task_id', $task->parent_task_id)
-                ->whereKeyNot($task->id)
-                ->sum('subtask_weight_percentage'), 2);
+        $siblingWeightWithoutTask = $task->parent_task_id === null ? 0.0 : round((float) Task::query()->where('parent_task_id', $task->parent_task_id)->whereKeyNot($task->id)->sum('subtask_weight_percentage'), 2);
         $remainingSubtaskWeight = max(0, round(100 - $siblingWeightWithoutTask, 2));
-        $totalSiblingWeight = $task->parent_task_id === null
-            ? 0.0
-            : round($siblingWeightWithoutTask + (float) ($task->subtask_weight_percentage ?? 0), 2);
+        $totalSiblingWeight = $task->parent_task_id === null ? 0.0 : round($siblingWeightWithoutTask + (float) ($task->subtask_weight_percentage ?? 0), 2);
         $taskHasSubtasks = $task->subtasks_count > 0;
-        $subtaskStatusReady = $task->parent_task_id === null
-            || $task->status !== 'to_do'
-            || $totalSiblingWeight === 100.0;
+        $subtaskStatusReady = $task->parent_task_id === null || $task->status !== 'to_do' || $totalSiblingWeight === 100.0;
 
-        return view('tasks.edit', compact(
-            'task',
-            'projects',
-            'assignees',
-            'back_url',
-            'taskDepth',
-            'siblingWeightWithoutTask',
-            'remainingSubtaskWeight',
-            'totalSiblingWeight',
-            'taskHasSubtasks',
-            'subtaskStatusReady',
-        ));
+        return view('tasks.edit', compact('task', 'projects', 'assignees', 'back_url', 'taskDepth', 'siblingWeightWithoutTask', 'remainingSubtaskWeight', 'totalSiblingWeight', 'taskHasSubtasks', 'subtaskStatusReady'));
     }
 
     public function show(string $token)
@@ -395,29 +660,11 @@ class TaskController extends Controller
         $task = $this->findByToken($token);
 
         $isSuperAdmin = Auth::user()->isSuperAdmin();
-        if (! $isSuperAdmin && ! $task->project->isMember(Auth::user())) {
+        if (!$isSuperAdmin && !$task->project->isMember(Auth::user())) {
             abort(403, 'You do not have access to this task.');
         }
 
-        $task->load([
-            'project.workspace',
-            'assignees',
-            'assignee',
-            'creator',
-            'parent.parent',
-            'statusWeight',
-            'statusHistory.changer',
-            'subtasks.assignees',
-            'subtasks.assignee',
-            'subtasks.statusWeight',
-            'subtasks.statusHistory',
-            'subtasks.subtasks.assignees',
-            'subtasks.subtasks.assignee',
-            'subtasks.subtasks.statusWeight',
-            'subtasks.subtasks.statusHistory',
-            'comments.user',
-            'attachments.uploader',
-        ]);
+        $task->load(['project.workspace', 'assignees', 'assignee', 'creator', 'parent.parent', 'statusWeight', 'statusHistory.changer', 'subtasks.assignees', 'subtasks.assignee', 'subtasks.statusWeight', 'subtasks.statusHistory', 'subtasks.subtasks.assignees', 'subtasks.subtasks.assignee', 'subtasks.subtasks.statusWeight', 'subtasks.subtasks.statusHistory', 'comments.user', 'attachments.uploader']);
         $task->loadCount('subtasks');
 
         $taskDepth = $this->taskHierarchyService->hierarchyDepth($task);
@@ -425,36 +672,26 @@ class TaskController extends Controller
         $visitedTaskIds = [];
         $this->decorateHierarchyTask($task, $taskDepth, $visitedTaskIds);
         $taskHasSubtasks = $task->subtasks_count > 0;
-        $canAddSubtask = $task->project->canContribute(Auth::user())
-            && $taskDepth < TaskHierarchyService::MAXIMUM_DEPTH;
+        $canAddSubtask = $task->project->canContribute(Auth::user()) && $taskDepth < TaskHierarchyService::MAXIMUM_DEPTH;
         $hierarchyProgressPercentage = (float) $task->getAttribute('hierarchy_progress_percentage');
         $hierarchyEarnedValue = $this->taskHierarchyService->resolveEarnedContribution($task);
 
         // Deteksi dari mana task diakses
-        $fromMyTask = str_contains(url()->previous(), '/tasks') && ! str_contains(url()->previous(), '/projects');
+        $fromMyTask = str_contains(url()->previous(), '/tasks') && !str_contains(url()->previous(), '/projects');
 
-        return view('tasks.show', compact(
-            'task',
-            'fromMyTask',
-            'taskDepth',
-            'hierarchyAncestors',
-            'taskHasSubtasks',
-            'canAddSubtask',
-            'hierarchyProgressPercentage',
-            'hierarchyEarnedValue',
-        ));
+        return view('tasks.show', compact('task', 'fromMyTask', 'taskDepth', 'hierarchyAncestors', 'taskHasSubtasks', 'canAddSubtask', 'hierarchyProgressPercentage', 'hierarchyEarnedValue'));
     }
 
     public function update(Request $request, string $token)
     {
         $task = $this->findByToken($token);
 
-        if (! $task->project->canContribute(Auth::user())) {
+        if (!$task->project->canContribute(Auth::user())) {
             abort(403, 'Viewer can only view this task.');
         }
 
         $validationData = $request->all();
-        if ($task->parent_task_id !== null && ! array_key_exists('subtask_weight_percentage', $validationData)) {
+        if ($task->parent_task_id !== null && !array_key_exists('subtask_weight_percentage', $validationData)) {
             $validationData['subtask_weight_percentage'] = $task->subtask_weight_percentage;
         }
 
@@ -465,20 +702,14 @@ class TaskController extends Controller
                 'name' => ['required', 'string', 'max:500'],
                 'description' => ['nullable', 'string'],
                 'assignee_ids' => ['nullable', 'array'],
-                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn ($query) => $query->where('project_id', $task->project_id))],
+                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn($query) => $query->where('project_id', $task->project_id))],
                 'status' => ['required', 'in:to_do,in_progress,review,completed,stopped,cancelled'],
                 'priority' => ['required', 'in:low,medium,high,urgent'],
                 'weight' => ['required', 'numeric', 'min:0.01'],
-                'subtask_weight_percentage' => [
-                    $task->parent_task_id !== null ? 'required' : 'prohibited',
-                    'nullable',
-                    'numeric',
-                    'gt:0',
-                    'lte:100',
-                ],
+                'subtask_weight_percentage' => [$task->parent_task_id !== null ? 'required' : 'prohibited', 'nullable', 'numeric', 'gt:0', 'lte:100'],
                 'start_date' => ['nullable', 'date'],
                 'due_date' => ['nullable', 'date', 'after_or_equal:start_date'],
-                'predecessor_id' => ['nullable', Rule::notIn([$task->id]), Rule::exists('tasks', 'id')->where(fn ($query) => $query->where('project_id', $task->project_id))],
+                'predecessor_id' => ['nullable', Rule::notIn([$task->id]), Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $task->project_id))],
                 'dependency_type' => ['nullable', 'in:FS,SS,FF,SF'],
             ],
             [
@@ -506,7 +737,7 @@ class TaskController extends Controller
                     $this->taskHierarchyService->validateStatusTransition($candidate, $validationData['status']);
                 }
 
-                if (! empty($validationData['predecessor_id'])) {
+                if (!empty($validationData['predecessor_id'])) {
                     $predecessor = Task::query()->findOrFail((int) $validationData['predecessor_id']);
                     $this->taskHierarchyService->validatePredecessorCandidate($task, $predecessor);
 
@@ -529,7 +760,7 @@ class TaskController extends Controller
                 $candidate->subtask_weight_percentage = $validated['subtask_weight_percentage'] ?? null;
                 $this->taskHierarchyService->validateSubtaskWeight($candidate);
 
-                if (! empty($validated['predecessor_id'])) {
+                if (!empty($validated['predecessor_id'])) {
                     $predecessor = Task::query()->lockForUpdate()->findOrFail($validated['predecessor_id']);
                     $this->taskHierarchyService->validatePredecessorCandidate($lockedTask, $predecessor);
 
@@ -555,20 +786,22 @@ class TaskController extends Controller
                     }
                 }
 
-                $lockedTask->update(array_merge(
-                    collect($validated)
-                        ->except(['assignee_ids', 'parent_task_id', 'status', 'predecessor_id', 'dependency_type'])
-                        ->toArray(),
-                    [
-                        'predecessor_id' => $validated['predecessor_id'] ?? null,
-                        'dependency_type' => $validated['dependency_type'] ?? 'FS',
-                    ],
-                ));
+                $lockedTask->update(
+                    array_merge(
+                        collect($validated)
+                            ->except(['assignee_ids', 'parent_task_id', 'status', 'predecessor_id', 'dependency_type'])
+                            ->toArray(),
+                        [
+                            'predecessor_id' => $validated['predecessor_id'] ?? null,
+                            'dependency_type' => $validated['dependency_type'] ?? 'FS',
+                        ],
+                    ),
+                );
 
                 $lockedTask->assignees()->sync($newAssigneeIds);
                 foreach (array_diff($newAssigneeIds, $oldAssigneeIds) as $assigneeId) {
                     if ($assigneeId != Auth::id()) {
-                        $message = 'Anda ditugaskan ke task: "'.$lockedTask->name.'" di project '.$lockedTask->project->name;
+                        $message = 'Anda ditugaskan ke task: "' . $lockedTask->name . '" di project ' . $lockedTask->project->name;
                         Notification::create([
                             'user_id' => $assigneeId,
                             'type' => 'assignment',
@@ -593,13 +826,13 @@ class TaskController extends Controller
                     $this->taskHierarchyService->synchronizeAncestors($lockedTask, Auth::id());
                 }
 
-                if (! empty($changes)) {
+                if (!empty($changes)) {
                     ActivityLog::create([
                         'user_id' => Auth::id(),
                         'action' => 'updated',
                         'entity_type' => 'task',
                         'entity_id' => $lockedTask->id,
-                        'description' => 'Updated task: '.$lockedTask->name,
+                        'description' => 'Updated task: ' . $lockedTask->name,
                         'old_value' => $changes,
                         'new_value' => $changes,
                     ]);
@@ -611,7 +844,7 @@ class TaskController extends Controller
                         'action' => 'status_changed',
                         'entity_type' => 'task',
                         'entity_id' => $lockedTask->id,
-                        'description' => 'Mengubah status task "'.$lockedTask->name.'" dari '.$oldStatus.' menjadi '.$validated['status'],
+                        'description' => 'Mengubah status task "' . $lockedTask->name . '" dari ' . $oldStatus . ' menjadi ' . $validated['status'],
                         'old_value' => ['status' => $oldStatus],
                         'new_value' => ['status' => $validated['status']],
                     ]);
@@ -628,7 +861,7 @@ class TaskController extends Controller
             throw $exception;
         } catch (Throwable $e) {
             return back()
-                ->withErrors(['error' => 'Failed to update task: '.$e->getMessage()])
+                ->withErrors(['error' => 'Failed to update task: ' . $e->getMessage()])
                 ->withInput();
         }
     }
@@ -637,7 +870,7 @@ class TaskController extends Controller
     {
         $task = $this->findByToken($token);
 
-        if (! $task->project->isManager(Auth::user())) {
+        if (!$task->project->isManager(Auth::user())) {
             abort(403);
         }
 
@@ -654,7 +887,7 @@ class TaskController extends Controller
                     'action' => 'deleted',
                     'entity_type' => 'task',
                     'entity_id' => $lockedTask->id,
-                    'description' => 'Deleted task: '.$lockedTask->name,
+                    'description' => 'Deleted task: ' . $lockedTask->name,
                 ]);
 
                 $lockedTask->delete();
@@ -680,7 +913,7 @@ class TaskController extends Controller
         $task = $this->findByToken($token);
 
         $isSuperAdmin = Auth::user()->isSuperAdmin();
-        if (! $isSuperAdmin && ! $task->project->canContribute(Auth::user())) {
+        if (!$isSuperAdmin && !$task->project->canContribute(Auth::user())) {
             abort(403);
         }
 
@@ -701,7 +934,7 @@ class TaskController extends Controller
                         'action' => 'status_changed',
                         'entity_type' => 'task',
                         'entity_id' => $lockedTask->id,
-                        'description' => 'Mengubah status task "'.$lockedTask->name.'" dari '.$oldStatus.' menjadi '.$validated['status'],
+                        'description' => 'Mengubah status task "' . $lockedTask->name . '" dari ' . $oldStatus . ' menjadi ' . $validated['status'],
                         'old_value' => ['status' => $oldStatus],
                         'new_value' => ['status' => $validated['status']],
                     ]);
@@ -709,14 +942,13 @@ class TaskController extends Controller
                     if ($validated['status'] !== 'completed' && $lockedTask->priority === 'urgent') {
                         $lockedTask->load('assignees');
                         foreach ($lockedTask->assignees as $assignee) {
-                            $this->queueEmailAfterCommit($assignee, 'Urgent Task Alert', 'Task "'.$lockedTask->name.'" is marked as urgent and needs immediate attention!', $lockedTask);
+                            $this->queueEmailAfterCommit($assignee, 'Urgent Task Alert', 'Task "' . $lockedTask->name . '" is marked as urgent and needs immediate attention!', $lockedTask);
                         }
                     }
                 }
 
                 $this->projectProgressService->syncPlannedProgress($lockedTask->project);
                 $this->projectProgressService->recordActualProgress($lockedTask->project);
-
             });
 
             if ($request->expectsJson()) {
@@ -755,8 +987,8 @@ class TaskController extends Controller
             ->push($task->created_by)
             ->filter()
             ->unique()
-            ->reject(fn ($recipientId) => $recipientId == Auth::id());
-        $message = 'Status task "'.$task->name.'" diubah dari '.ucfirst(str_replace('_', ' ', $oldStatus)).' menjadi '.ucfirst(str_replace('_', ' ', $newStatus));
+            ->reject(fn($recipientId) => $recipientId == Auth::id());
+        $message = 'Status task "' . $task->name . '" diubah dari ' . ucfirst(str_replace('_', ' ', $oldStatus)) . ' menjadi ' . ucfirst(str_replace('_', ' ', $newStatus));
 
         foreach ($recipientIds as $recipientId) {
             Notification::create([
@@ -908,9 +1140,7 @@ class TaskController extends Controller
 
     public function ganttData(Request $request)
     {
-        return response()->json(
-            $this->taskGanttService->forUser(Auth::user(), $request->get('status', 'all'))
-        );
+        return response()->json($this->taskGanttService->forUser(Auth::user(), $request->get('status', 'all')));
     }
 
     public function tasksJson($id)

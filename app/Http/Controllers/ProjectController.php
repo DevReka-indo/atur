@@ -15,13 +15,11 @@ use App\Models\User;
 use App\Models\ActivityLog;
 use App\Jobs\SendEmailNotification;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
 
 class ProjectController extends Controller
 {
-    public function __construct(
-        private TaskHierarchyService $taskHierarchyService,
-        private TaskGanttService $taskGanttService,
-    ) {}
+    public function __construct(private TaskHierarchyService $taskHierarchyService, private TaskGanttService $taskGanttService) {}
 
     // Resolve project by token (helper internal)
     private function findByToken(string $token): Project
@@ -31,23 +29,20 @@ class ProjectController extends Controller
 
     public function index(Request $request)
     {
-        $user   = Auth::user();
+        $user = Auth::user();
         app(DashboardController::class)->sendDeadlineNotificationsPublic($user);
         $status = $request->get('status', 'all');
-        $view   = $request->get('view', 'list');
+        $view = $request->get('view', 'list');
 
-        $query = Project::withCount('tasks')
-            ->whereHas('members', function ($q) use ($user) {
-                $q->where('user_id', $user->id);
-            });
+        $query = Project::withCount('tasks')->whereHas('members', function ($q) use ($user) {
+            $q->where('user_id', $user->id);
+        });
 
         if ($status !== 'all') {
             $query->where('status', $status);
         }
 
-        $projects = $query->orderByRaw("CASE WHEN status = 'urgent' THEN 0 ELSE 1 END")
-            ->latest()
-            ->get();
+        $projects = $query->orderByRaw("CASE WHEN status = 'urgent' THEN 0 ELSE 1 END")->latest()->get();
 
         return view('projects.index', compact('projects', 'view'));
     }
@@ -63,11 +58,11 @@ class ProjectController extends Controller
     {
         $validated = $request->validate([
             'workspace_id' => 'required|exists:workspaces,id',
-            'name'         => 'required|string|max:255',
-            'description'  => 'nullable|string',
-            'start_date'   => 'required|date',
-            'due_date'     => 'required|date|after_or_equal:start_date',
-            'status'       => 'required|in:planning,active,on_hold,completed,cancelled,urgent',
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'start_date' => 'required|date',
+            'due_date' => 'required|date|after_or_equal:start_date',
+            'status' => 'required|in:planning,active,on_hold,completed,cancelled,urgent',
         ]);
 
         $workspace = Workspace::findOrFail($validated['workspace_id']);
@@ -105,7 +100,7 @@ class ProjectController extends Controller
                     'description' => 'Mulai project, perkenalan tim, dan briefing awal.',
                     'status' => 'to_do',
                     'priority' => 'high',
-                    'weight' => 1.00,
+                    'weight' => 1.0,
                     'start_date' => $validated['start_date'],
                     'due_date' => $validated['start_date'],
                 ],
@@ -114,7 +109,7 @@ class ProjectController extends Controller
                     'description' => 'Kumpulkan semua kebutuhan dan spesifikasi project.',
                     'status' => 'to_do',
                     'priority' => 'high',
-                    'weight' => 1.00,
+                    'weight' => 1.0,
                     'start_date' => $validated['start_date'],
                     'due_date' => $validated['due_date'],
                 ],
@@ -123,7 +118,7 @@ class ProjectController extends Controller
                     'description' => 'Buat rencana kerja, jadwal, dan pembagian tugas.',
                     'status' => 'to_do',
                     'priority' => 'medium',
-                    'weight' => 1.00,
+                    'weight' => 1.0,
                     'start_date' => $validated['start_date'],
                     'due_date' => $validated['due_date'],
                 ],
@@ -132,7 +127,7 @@ class ProjectController extends Controller
                     'description' => 'Pelaksanaan pekerjaan utama project.',
                     'status' => 'to_do',
                     'priority' => 'medium',
-                    'weight' => 1.00,
+                    'weight' => 1.0,
                     'start_date' => $validated['start_date'],
                     'due_date' => $validated['due_date'],
                 ],
@@ -141,7 +136,7 @@ class ProjectController extends Controller
                     'description' => 'Evaluasi hasil dan pengujian sebelum selesai.',
                     'status' => 'to_do',
                     'priority' => 'medium',
-                    'weight' => 1.00,
+                    'weight' => 1.0,
                     'start_date' => $validated['start_date'],
                     'due_date' => $validated['due_date'],
                 ],
@@ -150,7 +145,7 @@ class ProjectController extends Controller
                     'description' => 'Dokumentasi akhir, serah terima, dan penutupan project.',
                     'status' => 'to_do',
                     'priority' => 'low',
-                    'weight' => 1.00,
+                    'weight' => 1.0,
                     'start_date' => $validated['due_date'],
                     'due_date' => $validated['due_date'],
                 ],
@@ -178,124 +173,281 @@ class ProjectController extends Controller
                 'action' => 'created',
                 'entity_type' => 'project',
                 'entity_id' => $project->id,
-                'description' => 'Membuat project: '.$project->name,
+                'description' => 'Membuat project: ' . $project->name,
             ]);
 
             return $project;
         });
 
-        return redirect()->route('projects.show', $project->token)
-            ->with('success', 'Project created! Template tasks have been added — edit them as needed.');
+        return redirect()->route('projects.show', $project->token)->with('success', 'Project created! Template tasks have been added — edit them as needed.');
     }
 
     public function show(string $token)
     {
         $project = $this->findByToken($token);
+        $user = Auth::user();
 
-        if (!$project->isMember(Auth::user())) {
+        if (!$project->isMember($user)) {
             return redirect()->back()->with('access_denied', 'Kamu tidak memiliki akses ke project ini. Hubungi manager project untuk ditambahkan sebagai member.');
         }
 
-        $project->loadCount('tasks');
-        $project->load([
-            'workspace',
-            'workspace.members',
-            'members',
-            'tasks.assignees',
-            'tasks.assignee',
-            'tasks.statusWeight',
-            'tasks.statusHistory',
-            'activeBaseline.plannedProgress',
-            'activeBaseline.taskBaselines',
-            'actualProgress',
-        ]);
+        $currentView = request()->string('view', 'list')->toString();
+        $currentTab = request()->string('tab', 'tasks')->toString();
 
-        $canContribute = $project->canContribute(Auth::user());
-        $ganttPayload = request('view', 'list') === 'gantt'
-            ? $this->taskGanttService->forProject($project, $canContribute)
-            : ['data' => [], 'links' => []];
-        $kanbanTasks = collect();
-        if (request('view', 'list') === 'kanban') {
-            $kanbanTasks = Task::query()
-                ->where('project_id', $project->id)
-                ->whereDoesntHave('subtasks')
-                ->with([
-                    'project',
-                    'assignees',
-                    'assignee',
-                    'statusWeight',
-                    'parent:id,token,name,parent_task_id',
-                    'parent.parent:id,token,name,parent_task_id',
-                ])
-                ->get()
-                ->groupBy('status');
+        if (!in_array($currentView, ['list', 'gantt', 'kanban'], true)) {
+            $currentView = 'list';
         }
 
-        $progress         = $project->calculateProgress();
-        $availableMembers = $project->workspace->members->whereNotIn('id', $project->members->pluck('id'));
-        $tasksByParent = $project->tasks->groupBy(fn (Task $task): int => (int) ($task->parent_task_id ?? 0));
+        if (!in_array($currentTab, ['tasks', 'members', 'chart'], true)) {
+            $currentTab = 'tasks';
+        }
+
+        $this->loadProjectShowRelations($project);
+
+        $isManager = $project->isManager($user);
+        $canManageMembers = $isManager;
+        $canContribute = $project->canContribute($user);
+        $canChangeProjectStatus = $user->isSuperAdmin() || $canContribute;
+
+        $progress = round($project->calculateProgress(), 1);
+
+        $availableMembers = $project->workspace->members->whereNotIn('id', $project->members->pluck('id'))->values();
+
+        $taskHierarchyRoots = $this->buildProjectTaskHierarchy($project);
+
+        $ganttPayload =
+            $currentView === 'gantt'
+                ? $this->taskGanttService->forProject($project, $canContribute)
+                : [
+                    'data' => [],
+                    'links' => [],
+                ];
+
+        $kanbanTasks = $currentView === 'kanban' ? $this->buildProjectKanbanTasks($project) : collect();
+
+        $chart = $this->buildProjectChartData($project);
+        $memberData = $this->buildProjectMemberData($project);
+
+        $projectStatusColors = [
+            'planning' => 'bg-gray-200 text-gray-700',
+            'active' => 'bg-blue-300 text-blue-700',
+            'on_hold' => 'bg-yellow-100 text-yellow-800',
+            'completed' => 'bg-green-300 text-green-700',
+            'cancelled' => 'bg-red-200 text-red-700',
+            'urgent' => 'bg-orange-200 text-orange-800',
+        ];
+
+        $projectStatuses = [
+            'planning' => 'Planning',
+            'active' => 'Active',
+            'on_hold' => 'On Hold',
+            'completed' => 'Completed',
+            'cancelled' => 'Cancelled',
+            'urgent' => 'Urgent',
+        ];
+
+        $kanbanStatuses = [
+            'to_do' => 'To Do',
+            'in_progress' => 'In Progress',
+            'review' => 'Review',
+            'completed' => 'Completed',
+            'stopped' => 'Stopped',
+            'cancelled' => 'Cancelled',
+        ];
+
+        return view('projects.show', [
+            'project' => $project,
+
+            'currentView' => $currentView,
+            'currentTab' => $currentTab,
+
+            'isManager' => $isManager,
+            'canManageMembers' => $canManageMembers,
+            'canContribute' => $canContribute,
+            'canChangeProjectStatus' => $canChangeProjectStatus,
+
+            'progress' => $progress,
+
+            'availableMembers' => $availableMembers,
+
+            'taskHierarchyRoots' => $taskHierarchyRoots,
+            'ganttPayload' => $ganttPayload,
+            'kanbanTasks' => $kanbanTasks,
+            'kanbanStatuses' => $kanbanStatuses,
+
+            'baseline' => $chart['baseline'],
+            'chartData' => $chart['chartData'],
+
+            'overloadedMemberIds' => $memberData['overloadedMemberIds'],
+            'memberTaskCounts' => $memberData['memberTaskCounts'],
+
+            'managers' => $memberData['managers'],
+            'members' => $memberData['members'],
+            'viewers' => $memberData['viewers'],
+
+            'currentUserId' => $user->id,
+            'workspaceOwnerId' => $project->workspace->created_by,
+
+            'projectStatuses' => $projectStatuses,
+            'projectStatusColors' => $projectStatusColors,
+        ]);
+    }
+
+    private function loadProjectShowRelations(Project $project): void
+    {
+        $project->loadCount('tasks');
+
+        $project->load(['workspace', 'workspace.members', 'members', 'tasks.assignees', 'tasks.assignee', 'tasks.statusWeight', 'tasks.statusHistory', 'activeBaseline.plannedProgress', 'activeBaseline.taskBaselines', 'actualProgress']);
+    }
+
+    private function buildProjectKanbanTasks(Project $project): Collection
+    {
+        return Task::query()
+            ->where('project_id', $project->id)
+            ->whereDoesntHave('subtasks')
+            ->with(['project', 'project.workspace', 'assignees', 'assignee', 'statusWeight', 'parent:id,token,name,parent_task_id', 'parent.parent:id,token,name,parent_task_id'])
+            ->orderByRaw("CASE WHEN priority = 'urgent' THEN 0 ELSE 1 END")
+            ->latest()
+            ->get()
+            ->groupBy('status');
+    }
+
+    private function buildProjectTaskHierarchy(Project $project): Collection
+    {
+        $tasksByParent = $project->tasks->groupBy(fn(Task $task): int => (int) ($task->parent_task_id ?? 0));
+
         $taskHierarchyRoots = $tasksByParent->get(0, collect())->values();
+
         $visitedTaskIds = [];
 
         foreach ($taskHierarchyRoots as $rootTask) {
-            $this->prepareTaskHierarchy($rootTask, $tasksByParent, 0, $visitedTaskIds);
+            $this->prepareTaskHierarchy(task: $rootTask, tasksByParent: $tasksByParent, depth: 0, visitedTaskIds: $visitedTaskIds);
         }
 
-        $baseline        = $project->activeBaseline;
-        $plannedProgress = $baseline
-            ? $baseline->plannedProgress->sortBy('date')->values()
-            : collect();
+        return $taskHierarchyRoots;
+    }
 
-        $actualProgress = $project->actualProgress
-            ->when($baseline, fn($collection) => $collection->where('baseline_id', $baseline->id))
-            ->sortBy('date')
+    private function buildProjectChartData(Project $project): array
+    {
+        $baseline = $project->activeBaseline;
+
+        $plannedProgress = $baseline ? $baseline->plannedProgress->sortBy('date')->values() : collect();
+
+        $actualProgress = $project->actualProgress->when($baseline, fn(Collection $collection): Collection => $collection->where('baseline_id', $baseline->id))->sortBy('date')->values();
+
+        $chartData = [
+            'labels' => [],
+            'planned' => [],
+            'actual' => [],
+            'completed_tasks' => [],
+            'total_tasks' => [],
+        ];
+
+        if ($plannedProgress->isEmpty() && $actualProgress->isEmpty()) {
+            return [
+                'baseline' => $baseline,
+                'chartData' => $chartData,
+            ];
+        }
+
+        $dateLabels = collect()
+            ->merge($plannedProgress->pluck('date')->map(fn($date): string => $date->format('Y-m-d')))
+            ->merge($actualProgress->pluck('date')->map(fn($date): string => $date->format('Y-m-d')))
+            ->unique()
+            ->sort()
             ->values();
 
-        $chartData = ['labels' => [], 'planned' => [], 'actual' => []];
+        $plannedMap = $plannedProgress->mapWithKeys(
+            fn($item): array => [
+                $item->date->format('Y-m-d') => (float) $item->planned_cumulative_percentage,
+            ],
+        );
 
-        if ($plannedProgress->isNotEmpty() || $actualProgress->isNotEmpty()) {
-            $dateLabels = collect()
-                ->merge($plannedProgress->pluck('date')->map(fn($date) => $date->format('Y-m-d')))
-                ->merge($actualProgress->pluck('date')->map(fn($date) => $date->format('Y-m-d')))
-                ->unique()->sort()->values();
+        $actualMap = $actualProgress->mapWithKeys(
+            fn($item): array => [
+                $item->date->format('Y-m-d') => (float) $item->actual_cumulative_percentage,
+            ],
+        );
 
-            $plannedMap = $plannedProgress
-                ->mapWithKeys(fn($item) => [$item->date->format('Y-m-d') => (float) $item->planned_cumulative_percentage]);
+        $completedMap = $actualProgress->mapWithKeys(
+            fn($item): array => [
+                $item->date->format('Y-m-d') => (int) $item->completed_tasks_count,
+            ],
+        );
 
-            $actualMap = $actualProgress
-                ->mapWithKeys(fn($item) => [$item->date->format('Y-m-d') => (float) $item->actual_cumulative_percentage]);
+        $totalMap = $actualProgress->mapWithKeys(
+            fn($item): array => [
+                $item->date->format('Y-m-d') => (int) $item->total_tasks_count,
+            ],
+        );
 
-            $completedMap = $actualProgress
-                ->mapWithKeys(fn($item) => [$item->date->format('Y-m-d') => (int) $item->completed_tasks_count]);
+        $chartData['labels'] = $dateLabels->map(fn(string $date): string => \Carbon\Carbon::parse($date)->format('d M Y'))->all();
 
-            $totalMap = $actualProgress
-                ->mapWithKeys(fn($item) => [$item->date->format('Y-m-d') => (int) $item->total_tasks_count]);
+        $chartData['planned'] = $dateLabels->map(fn(string $date): ?float => $plannedMap->get($date))->all();
 
-            $chartData['labels']          = $dateLabels->map(fn($date) => \Carbon\Carbon::parse($date)->format('d M Y'))->toArray();
-            $chartData['planned']         = $dateLabels->map(fn($date) => $plannedMap[$date] ?? null)->toArray();
-            $chartData['actual']          = $dateLabels->map(fn($date) => $actualMap[$date] ?? null)->toArray();
-            $chartData['completed_tasks'] = $dateLabels->map(fn($date) => $completedMap[$date] ?? null)->toArray();
-            $chartData['total_tasks']     = $dateLabels->map(fn($date) => $totalMap[$date] ?? null)->toArray();
+        $chartData['actual'] = $dateLabels->map(fn(string $date): ?float => $actualMap->get($date))->all();
+
+        $chartData['completed_tasks'] = $dateLabels->map(fn(string $date): ?int => $completedMap->get($date))->all();
+
+        $chartData['total_tasks'] = $dateLabels->map(fn(string $date): ?int => $totalMap->get($date))->all();
+
+        return [
+            'baseline' => $baseline,
+            'chartData' => $chartData,
+        ];
+    }
+
+    private function buildProjectMemberData(Project $project): array
+    {
+        $currentUserId = Auth::id();
+
+        $memberTaskCounts = $project->members->mapWithKeys(
+            fn(User $member): array => [
+                $member->id => 0,
+            ],
+        );
+
+        foreach ($project->tasks as $task) {
+            if (in_array($task->status, ['completed', 'cancelled'], true)) {
+                continue;
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | Assignment compatibility
+        |--------------------------------------------------------------------------
+        |
+        | Pivot menjadi sumber utama.
+        | Legacy assignee_id hanya dipakai jika pivot kosong.
+        |
+        */
+            $assignedUserIds = $task->assignees->isNotEmpty() ? $task->assignees->pluck('id') : collect([$task->assignee_id])->filter();
+
+            foreach ($assignedUserIds->unique() as $assignedUserId) {
+                if (!$memberTaskCounts->has($assignedUserId)) {
+                    continue;
+                }
+
+                $memberTaskCounts->put($assignedUserId, ((int) $memberTaskCounts->get($assignedUserId)) + 1);
+            }
         }
 
-        // overload
-        $overloadedMemberIds = $project->members->filter(function ($member) use ($project) {
-            $count = \App\Models\Task::where('project_id', $project->id)
-                ->assignedToUser($member->id)
-                ->whereNotIn('status', ['completed', 'cancelled'])
-                ->count();
-            return $count >= 5;
-        })->pluck('id')->toArray();
+        $overloadedMemberIds = $memberTaskCounts->filter(fn(int $count): bool => $count >= 5)->keys()->map(fn($id): int => (int) $id)->all();
 
-        $memberTaskCounts = $project->members->mapWithKeys(function ($member) use ($project) {
-            $count = \App\Models\Task::where('project_id', $project->id)
-                ->assignedToUser($member->id)
-                ->whereNotIn('status', ['completed', 'cancelled'])
-                ->count();
-            return [$member->id => $count];
-        });
+        $managers = $project->members->filter(fn(User $member): bool => $member->pivot->role === 'manager')->sortByDesc(fn(User $member): bool => $member->id === $currentUserId)->values();
 
-        return view('projects.show', compact('project', 'progress', 'availableMembers', 'baseline', 'chartData', 'overloadedMemberIds', 'memberTaskCounts', 'taskHierarchyRoots', 'canContribute', 'kanbanTasks', 'ganttPayload'));
+        $members = $project->members->filter(fn(User $member): bool => $member->pivot->role === 'member')->sortByDesc(fn(User $member): bool => $member->id === $currentUserId)->values();
+
+        $viewers = $project->members->filter(fn(User $member): bool => $member->pivot->role === 'viewer')->sortByDesc(fn(User $member): bool => $member->id === $currentUserId)->values();
+
+        return [
+            'memberTaskCounts' => $memberTaskCounts,
+            'overloadedMemberIds' => $overloadedMemberIds,
+
+            'managers' => $managers,
+            'members' => $members,
+            'viewers' => $viewers,
+        ];
     }
 
     public function edit(string $token)
@@ -323,19 +475,19 @@ class ProjectController extends Controller
 
         $validated = $request->validate([
             'workspace_id' => 'required|exists:workspaces,id',
-            'name'         => 'required|string|max:255',
-            'description'  => 'nullable|string',
-            'start_date'   => 'required|date',
-            'end_date'     => 'required|date|after_or_equal:start_date',
-            'status'       => 'required|in:planning,active,on_hold,completed,cancelled,urgent',
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'start_date' => 'required|date',
+            'end_date' => 'required|date|after_or_equal:start_date',
+            'status' => 'required|in:planning,active,on_hold,completed,cancelled,urgent',
         ]);
 
         $project->update($validated);
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'updated',
+            'user_id' => Auth::id(),
+            'action' => 'updated',
             'entity_type' => 'project',
-            'entity_id'   => $project->id,
+            'entity_id' => $project->id,
             'description' => 'Mengubah project: ' . $project->name,
         ]);
         app(ProjectProgressService::class)->syncPlannedProgress($project);
@@ -355,23 +507,20 @@ class ProjectController extends Controller
         $workspaceToken = $project->workspace->token;
 
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'deleted',
+            'user_id' => Auth::id(),
+            'action' => 'deleted',
             'entity_type' => 'project',
-            'entity_id'   => $project->id,
+            'entity_id' => $project->id,
             'description' => 'Menghapus project: ' . $project->name,
         ]);
 
         $project->delete();
 
         if (request('redirect') === 'management') {
-            return redirect()->route('managementprojects.index')
-                ->with('success', 'Project deleted successfully!');
+            return redirect()->route('managementprojects.index')->with('success', 'Project deleted successfully!');
         }
 
-        $backUrl = $request->input('back_url')
-            ?? session('project_back_url')
-            ?? route('workspaces.show', $workspaceToken);
+        $backUrl = $request->input('back_url') ?? (session('project_back_url') ?? route('workspaces.show', $workspaceToken));
 
         return redirect($backUrl)->with('success', 'Project deleted successfully!');
     }
@@ -385,49 +534,48 @@ class ProjectController extends Controller
         }
 
         $validated = $request->validate([
-            'user_ids'   => 'required|array|min:1',
+            'user_ids' => 'required|array|min:1',
             'user_ids.*' => 'exists:users,id',
-            'role'       => 'required|in:manager,member,viewer',
+            'role' => 'required|in:manager,member,viewer',
         ]);
 
         $added = 0;
         foreach ($validated['user_ids'] as $userId) {
-            if (!$project->workspace->members()->where('user_id', $userId)->exists()) continue;
-            if ($project->members()->where('user_id', $userId)->exists()) continue;
+            if (!$project->workspace->members()->where('user_id', $userId)->exists()) {
+                continue;
+            }
+            if ($project->members()->where('user_id', $userId)->exists()) {
+                continue;
+            }
 
             $project->members()->attach($userId, [
-                'role'      => $validated['role'],
+                'role' => $validated['role'],
                 'joined_at' => now(),
             ]);
 
             if ($userId != Auth::id()) {
                 Notification::create([
-                    'user_id'    => $userId,
-                    'type'       => 'project_added',
-                    'title'      => 'Ditambahkan ke Project',
-                    'message'    => 'Anda ditambahkan ke project "' . $project->name . '" sebagai ' . ucfirst($validated['role']),
+                    'user_id' => $userId,
+                    'type' => 'project_added',
+                    'title' => 'Ditambahkan ke Project',
+                    'message' => 'Anda ditambahkan ke project "' . $project->name . '" sebagai ' . ucfirst($validated['role']),
                     'project_id' => $project->id,
-                    'task_id'    => null,
+                    'task_id' => null,
                 ]);
 
                 // Kirim email via Job
                 $recipient = User::find($userId);
                 if ($recipient) {
-                    SendEmailNotification::dispatch(
-                        $recipient,
-                        'Ditambahkan ke Project',
-                        'Anda ditambahkan ke project "' . $project->name . '" sebagai ' . ucfirst($validated['role']),
-                        route('projects.show', $project->token),
-                    );
+                    SendEmailNotification::dispatch($recipient, 'Ditambahkan ke Project', 'Anda ditambahkan ke project "' . $project->name . '" sebagai ' . ucfirst($validated['role']), route('projects.show', $project->token));
                 }
             }
             $added++;
 
             ActivityLog::create([
-                'user_id'     => Auth::id(),
-                'action'      => 'assigned',
+                'user_id' => Auth::id(),
+                'action' => 'assigned',
                 'entity_type' => 'project',
-                'entity_id'   => $project->id,
+                'entity_id' => $project->id,
                 'description' => 'Menambahkan anggota ke project: ' . $project->name,
             ]);
         }
@@ -468,19 +616,10 @@ class ProjectController extends Controller
         DB::transaction(function () use ($project, $user): void {
             $taskIds = Task::query()->where('project_id', $project->id)->pluck('id')->all();
 
-            $pivotAssignmentCount = DB::table('task_assignees')
-                ->where('user_id', $user->id)
-                ->whereIn('task_id', $taskIds)
-                ->count();
-            $legacyAssignmentCount = Task::query()
-                ->whereIn('id', $taskIds)
-                ->where('assignee_id', $user->id)
-                ->count();
+            $pivotAssignmentCount = DB::table('task_assignees')->where('user_id', $user->id)->whereIn('task_id', $taskIds)->count();
+            $legacyAssignmentCount = Task::query()->whereIn('id', $taskIds)->where('assignee_id', $user->id)->count();
 
-            DB::table('task_assignees')
-                ->where('user_id', $user->id)
-                ->whereIn('task_id', $taskIds)
-                ->delete();
+            DB::table('task_assignees')->where('user_id', $user->id)->whereIn('task_id', $taskIds)->delete();
             Task::query()
                 ->whereIn('id', $taskIds)
                 ->where('assignee_id', $user->id)
@@ -489,8 +628,7 @@ class ProjectController extends Controller
             Notification::query()
                 ->where('user_id', $user->id)
                 ->where(function ($query) use ($project, $taskIds): void {
-                    $query->where('project_id', $project->id)
-                        ->orWhereIn('task_id', $taskIds);
+                    $query->where('project_id', $project->id)->orWhereIn('task_id', $taskIds);
                 })
                 ->delete();
 
@@ -501,17 +639,7 @@ class ProjectController extends Controller
                 'action' => 'updated',
                 'entity_type' => 'project',
                 'entity_id' => $project->id,
-                'description' => sprintf(
-                    'Actor %s (ID %d) removed member %s (ID %d) from project %s (ID %d); detached %d pivot assignment(s) and cleared %d legacy assignment(s).',
-                    Auth::user()->name,
-                    Auth::id(),
-                    $user->name,
-                    $user->id,
-                    $project->name,
-                    $project->id,
-                    $pivotAssignmentCount,
-                    $legacyAssignmentCount,
-                ),
+                'description' => sprintf('Actor %s (ID %d) removed member %s (ID %d) from project %s (ID %d); detached %d pivot assignment(s) and cleared %d legacy assignment(s).', Auth::user()->name, Auth::id(), $user->name, $user->id, $project->name, $project->id, $pivotAssignmentCount, $legacyAssignmentCount),
                 'old_value' => [
                     'target_user_id' => $user->id,
                     'pivot_assignment_count' => $pivotAssignmentCount,
@@ -554,9 +682,7 @@ class ProjectController extends Controller
 
         $isSuperAdmin = $request->user()->isSuperAdmin();
 
-        $userRole = $project->members
-            ->where('id', $request->user()->id)
-            ->first()?->pivot->role ?? null;
+        $userRole = $project->members->where('id', $request->user()->id)->first()?->pivot->role ?? null;
 
         $canEdit = $isSuperAdmin || in_array($userRole, ['manager', 'member']);
 
@@ -567,10 +693,10 @@ class ProjectController extends Controller
         $project->update(['status' => $request->status]);
 
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'status_changed',
+            'user_id' => Auth::id(),
+            'action' => 'status_changed',
             'entity_type' => 'project',
-            'entity_id'   => $project->id,
+            'entity_id' => $project->id,
             'description' => 'Mengubah status project: ' . $project->name . ' menjadi ' . $request->status,
         ]);
 
@@ -579,8 +705,8 @@ class ProjectController extends Controller
 
     public function ganttData(Request $request)
     {
-        $tasks  = [];
-        $user   = Auth::user();
+        $tasks = [];
+        $user = Auth::user();
         $status = $request->get('status', 'all');
 
         $query = Project::whereHas('members', function ($q) use ($user) {
@@ -594,26 +720,22 @@ class ProjectController extends Controller
         $projects = $query->get();
 
         foreach ($projects as $project) {
-            $projectStart = $project->start_date
-                ? \Carbon\Carbon::parse($project->start_date)
-                : now();
+            $projectStart = $project->start_date ? \Carbon\Carbon::parse($project->start_date) : now();
 
-            $projectEnd = $project->end_date
-                ? \Carbon\Carbon::parse($project->end_date)
-                : $projectStart->copy()->addDay();
+            $projectEnd = $project->end_date ? \Carbon\Carbon::parse($project->end_date) : $projectStart->copy()->addDay();
 
             $tasks[] = [
-                'id'         => 'p_' . $project->id,
-                'text'       => $project->name,
+                'id' => 'p_' . $project->id,
+                'text' => $project->name,
                 'start_date' => $projectStart->format('d-m-Y'),
-                'duration'   => max(1, $projectStart->diffInDays($projectEnd) + 1),
-                'progress'   => 0,
-                'status'     => $project->status,
+                'duration' => max(1, $projectStart->diffInDays($projectEnd) + 1),
+                'progress' => 0,
+                'status' => $project->status,
             ];
         }
 
         return response()->json([
-            'data'  => $tasks,
+            'data' => $tasks,
             'links' => [],
         ]);
     }
