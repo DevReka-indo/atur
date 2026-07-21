@@ -7,6 +7,7 @@ use App\Models\Task;
 use App\Models\Workspace;
 use App\Models\Notification;
 use App\Services\TaskHierarchyService;
+use App\Services\TaskGanttService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Services\ProjectProgressService;
@@ -17,7 +18,10 @@ use Illuminate\Support\Facades\DB;
 
 class ProjectController extends Controller
 {
-    public function __construct(private TaskHierarchyService $taskHierarchyService) {}
+    public function __construct(
+        private TaskHierarchyService $taskHierarchyService,
+        private TaskGanttService $taskGanttService,
+    ) {}
 
     // Resolve project by token (helper internal)
     private function findByToken(string $token): Project
@@ -206,6 +210,27 @@ class ProjectController extends Controller
             'actualProgress',
         ]);
 
+        $canContribute = $project->canContribute(Auth::user());
+        $ganttPayload = request('view', 'list') === 'gantt'
+            ? $this->taskGanttService->forProject($project, $canContribute)
+            : ['data' => [], 'links' => []];
+        $kanbanTasks = collect();
+        if (request('view', 'list') === 'kanban') {
+            $kanbanTasks = Task::query()
+                ->where('project_id', $project->id)
+                ->whereDoesntHave('subtasks')
+                ->with([
+                    'project',
+                    'assignees',
+                    'assignee',
+                    'statusWeight',
+                    'parent:id,token,name,parent_task_id',
+                    'parent.parent:id,token,name,parent_task_id',
+                ])
+                ->get()
+                ->groupBy('status');
+        }
+
         $progress         = $project->calculateProgress();
         $availableMembers = $project->workspace->members->whereNotIn('id', $project->members->pluck('id'));
         $tasksByParent = $project->tasks->groupBy(fn (Task $task): int => (int) ($task->parent_task_id ?? 0));
@@ -270,7 +295,7 @@ class ProjectController extends Controller
             return [$member->id => $count];
         });
 
-        return view('projects.show', compact('project', 'progress', 'availableMembers', 'baseline', 'chartData', 'overloadedMemberIds', 'memberTaskCounts', 'taskHierarchyRoots'));
+        return view('projects.show', compact('project', 'progress', 'availableMembers', 'baseline', 'chartData', 'overloadedMemberIds', 'memberTaskCounts', 'taskHierarchyRoots', 'canContribute', 'kanbanTasks', 'ganttPayload'));
     }
 
     public function edit(string $token)

@@ -12,8 +12,8 @@ use App\Models\TaskComment;
 use App\Models\TaskStatusHistory;
 use App\Models\User;
 use App\Services\ProjectProgressService;
+use App\Services\TaskGanttService;
 use App\Services\TaskHierarchyService;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +29,7 @@ class TaskController extends Controller
     public function __construct(
         private TaskHierarchyService $taskHierarchyService,
         private ProjectProgressService $projectProgressService,
+        private TaskGanttService $taskGanttService,
     ) {}
 
     // task token
@@ -68,15 +69,39 @@ class TaskController extends Controller
         $status = $request->get('status', 'all');
 
         $query = Task::query()
-            ->with(['project.workspace', 'assignees', 'assignee', 'statusWeight', 'parent:id,token,name,parent_task_id'])
-            ->withCount('subtasks')
+            ->with([
+                'project.workspace',
+                'assignees',
+                'assignee',
+                'statusWeight',
+                'parent:id,token,name,parent_task_id',
+                'parent.parent:id,token,name,parent_task_id',
+            ])
             ->assignedToUser($user->id);
+
+        if ($view === 'kanban') {
+            $query->whereDoesntHave('subtasks');
+        } else {
+            $query->withCount('subtasks');
+        }
 
         if ($status !== 'all') {
             $query->where('status', $status);
         }
 
         $tasks = $query->orderByRaw("FIELD(priority, 'urgent') DESC")->latest()->get();
+        if ($view === 'kanban') {
+            $contributableProjectIds = $user->isSuperAdmin()
+                ? $tasks->pluck('project_id')->unique()
+                : $user->projects()
+                    ->wherePivotIn('role', ['manager', 'member'])
+                    ->whereIn('projects.id', $tasks->pluck('project_id')->unique())
+                    ->pluck('projects.id');
+
+            $tasks->each(function (Task $task) use ($contributableProjectIds): void {
+                $task->setAttribute('kanban_can_contribute', $contributableProjectIds->contains($task->project_id));
+            });
+        }
         $kanbanStatuses = [
             'to_do' => 'To Do',
             'in_progress' => 'In Progress',
@@ -702,6 +727,10 @@ class TaskController extends Controller
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (Throwable $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Failed to update status.'], 500);
+            }
+
             return back()->withErrors(['error' => 'Failed to update status.']);
         }
     }
@@ -879,85 +908,9 @@ class TaskController extends Controller
 
     public function ganttData(Request $request)
     {
-        $user = Auth::user();
-        $status = $request->get('status', 'all');
-
-        $query = Task::query()
-            ->with(['project', 'assignees', 'assignee'])
-            ->assignedToUser($user->id)
-            ->whereNotNull('start_date')
-            ->whereNotNull('due_date');
-
-        if ($status !== 'all') {
-            $query->where('status', $status);
-        }
-
-        $tasks = $query->get();
-
-        $depTypeMap = ['FS' => 0, 'SS' => 1, 'FF' => 2, 'SF' => 3];
-
-        $data = $tasks->map(function ($task) {
-            $start = Carbon::parse($task->start_date);
-            $end = Carbon::parse($task->due_date);
-            $duration = max(1, $start->diffInDays($end));
-
-            $progress = match ($task->status) {
-                'completed' => 1,
-                'review' => 0.8,
-                'in_progress' => 0.5,
-                default => 0,
-            };
-
-            $resource = '';
-            if ($task->assignees->count()) {
-                $resource = $task->assignees->pluck('name')->implode(', ');
-            } elseif ($task->assignee) {
-                $resource = $task->assignee->name;
-            }
-
-            $isMilestone = $start->equalTo($end);
-
-            $item = [
-                'id' => $task->id,
-                'text' => $task->name . ($task->project ? ' (' . $task->project->name . ')' : ''),
-                'start_date' => $start->format('d-m-Y'),
-                'duration' => $duration,
-                'progress' => $progress,
-                'status' => $task->status,
-                'priority' => $task->priority,
-                'token' => $task->token,
-                'predecessor_id' => $task->predecessor_id,
-                'dependency_type' => $task->dependency_type ?? 'FS',
-                'resource' => $resource,
-            ];
-
-            if ($task->parent_task_id) {
-                $item['parent'] = $task->parent_task_id;
-            }
-
-            if ($isMilestone) {
-                $item['type'] = 'milestone';
-            }
-
-            return $item;
-        });
-
-        $links = $tasks
-            ->whereNotNull('predecessor_id')
-            ->values()
-            ->map(function ($task) use ($depTypeMap) {
-                return [
-                    'id' => $task->id,
-                    'source' => $task->predecessor_id,
-                    'target' => $task->id,
-                    'type' => (string) ($depTypeMap[$task->dependency_type ?? 'FS'] ?? 0),
-                ];
-            });
-
-        return response()->json([
-            'data' => $data->values(),
-            'links' => $links->values(),
-        ]);
+        return response()->json(
+            $this->taskGanttService->forUser(Auth::user(), $request->get('status', 'all'))
+        );
     }
 
     public function tasksJson($id)

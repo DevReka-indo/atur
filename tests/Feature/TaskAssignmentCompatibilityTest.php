@@ -107,7 +107,10 @@ class TaskAssignmentCompatibilityTest extends TestCase
         $response = app(TaskController::class)->ganttData(Request::create('/gantt/data', 'GET'));
         $taskIds = collect($response->getData(true)['data'])->pluck('id')->all();
 
-        $this->assertEqualsCanonicalizing([$legacyTask->id, $pivotTask->id], $taskIds);
+        $this->assertEqualsCanonicalizing([
+            'task-'.$legacyTask->id,
+            'task-'.$pivotTask->id,
+        ], $taskIds);
     }
 
     public function test_project_card_shows_all_pivot_assignees_then_legacy_fallback_and_unassigned(): void

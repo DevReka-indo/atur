@@ -81,6 +81,11 @@ class Task extends Model
         return $this->belongsTo(Task::class, 'parent_task_id');
     }
 
+    public function predecessor()
+    {
+        return $this->belongsTo(Task::class, 'predecessor_id');
+    }
+
     // public function children()
     // {
     //     return $this->hasMany(Task::class, 'parent_task_id');

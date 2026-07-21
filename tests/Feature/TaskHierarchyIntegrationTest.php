@@ -11,6 +11,7 @@ use App\Models\TaskStatusHistory;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Services\ProjectProgressService;
+use App\Services\TaskGanttService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -531,6 +532,404 @@ class TaskHierarchyIntegrationTest extends TestCase
         $this->assertDatabaseHas('tasks', ['id' => $child->id]);
         $this->assertSame('completed', $parent->fresh()->status);
         Queue::assertNothingPushed();
+    }
+
+    public function test_my_tasks_kanban_contains_assigned_leaf_tasks_once_with_hierarchy_context(): void
+    {
+        $rootLeaf = $this->createTask(['name' => 'Root executable']);
+        $rootLeaf->assignees()->attach($this->member->id);
+
+        $parent = $this->createTask(['name' => 'Parent summary']);
+        $parent->assignees()->attach($this->member->id);
+        $levelOneLeaf = $this->createTask([
+            'name' => 'Level one executable',
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 50,
+        ]);
+        $levelOneLeaf->assignees()->attach($this->member->id);
+
+        $levelOneParent = $this->createTask([
+            'name' => 'Middle summary',
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 50,
+        ]);
+        $levelOneParent->assignees()->attach($this->member->id);
+        $levelTwoLeaf = $this->createTask([
+            'name' => 'Level two executable',
+            'parent_task_id' => $levelOneParent->id,
+            'subtask_weight_percentage' => 100,
+            'assignee_id' => $this->member->id,
+        ]);
+        $otherUserTask = $this->createTask(['name' => 'Not assigned to member']);
+        $otherUserTask->assignees()->attach($this->viewer->id);
+
+        $response = $this->actingAs($this->member)->get(route('tasks.index', ['view' => 'kanban']));
+
+        $response->assertOk()
+            ->assertSee($rootLeaf->name)
+            ->assertSee($levelOneLeaf->name)
+            ->assertSee($levelTwoLeaf->name)
+            ->assertSee('Subtask')
+            ->assertSee('Sub-subtask')
+            ->assertSee('Parent:')
+            ->assertSee('Bobot parent: 100.00%')
+            ->assertSee(route('tasks.show', $levelOneParent->token), false)
+            ->assertDontSee('data-task-token="'.$parent->token.'"', false)
+            ->assertDontSee('data-task-token="'.$levelOneParent->token.'"', false)
+            ->assertDontSee($otherUserTask->name);
+
+        $this->assertSame(1, substr_count($response->getContent(), 'data-task-token="'.$rootLeaf->token.'"'));
+        $this->assertSame(1, substr_count($response->getContent(), 'data-task-token="'.$levelTwoLeaf->token.'"'));
+    }
+
+    public function test_shared_kanban_card_keeps_root_plain_and_child_context_uses_parent_tokens(): void
+    {
+        $root = $this->createTask(['name' => 'Plain root card']);
+        $root->load(['project', 'assignees', 'assignee', 'parent.parent']);
+        $root->setAttribute('kanban_can_contribute', true);
+
+        $rootCard = $this->view('tasks.partials.kanban._card', [
+            'task' => $root,
+            'kanbanCanContribute' => null,
+            'kanbanShowProject' => true,
+        ]);
+
+        $rootCard->assertSee('Plain root card')
+            ->assertDontSee('Subtask')
+            ->assertDontSee('Bobot parent:');
+
+        $parent = $this->createTask(['name' => 'Linked parent']);
+        $child = $this->createTask([
+            'name' => 'Weighted child',
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 20,
+        ])->load(['project', 'assignees', 'assignee', 'parent.parent']);
+        $child->setAttribute('kanban_can_contribute', true);
+
+        $childCard = $this->view('tasks.partials.kanban._card', [
+            'task' => $child,
+            'kanbanCanContribute' => null,
+            'kanbanShowProject' => true,
+        ]);
+
+        $childCard->assertSee('Subtask')
+            ->assertSee('Parent:')
+            ->assertSee('Linked parent')
+            ->assertSee('Bobot parent: 20.00%')
+            ->assertSee(route('tasks.show', $parent->token), false);
+    }
+
+    public function test_project_kanban_uses_task_tokens_and_excludes_parent_and_other_project_tasks(): void
+    {
+        $parent = $this->createTask(['name' => 'Project parent summary']);
+        $child = $this->createTask([
+            'name' => 'Project executable child',
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 100,
+        ]);
+        $otherProjectTask = Task::factory()
+            ->for($this->otherProject)
+            ->for($this->manager, 'creator')
+            ->create(['name' => 'Other project task']);
+
+        $response = $this->actingAs($this->manager)->get(route('projects.show', [
+            'token' => $this->project->token,
+            'view' => 'kanban',
+        ]));
+
+        $response->assertOk()
+            ->assertSee($child->name)
+            ->assertSee('data-task-token="'.$child->token.'"', false)
+            ->assertSee('data-status-url="'.route('tasks.updateStatus', $child->token).'"', false)
+            ->assertDontSee('data-task-token="'.$parent->token.'"', false)
+            ->assertDontSee('data-task-id="'.$child->id.'"', false)
+            ->assertDontSee('/tasks/'.$child->id.'/status', false)
+            ->assertDontSee($otherProjectTask->name)
+            ->assertSee('restoreCard(card)', false)
+            ->assertSee('responseErrorMessage(response)', false)
+            ->assertSee("this.dataset.processing === '1'", false);
+    }
+
+    public function test_kanban_status_backend_rejects_viewer_unready_child_and_parent_summary(): void
+    {
+        $parent = $this->createTask(['name' => 'Protected parent']);
+        $child = $this->createTask([
+            'name' => 'Unready child',
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 40,
+        ]);
+        $this->createTask([
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 50,
+        ]);
+
+        $this->actingAs($this->viewer)
+            ->patchJson(route('tasks.updateStatus', $child->token), ['status' => 'in_progress'])
+            ->assertForbidden();
+
+        $this->actingAs($this->member)
+            ->patchJson(route('tasks.updateStatus', $child->token), ['status' => 'in_progress'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('status');
+
+        $this->actingAs($this->manager)
+            ->patchJson(route('tasks.updateStatus', $parent->token), ['status' => 'in_progress'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('status');
+
+        $viewerResponse = $this->actingAs($this->viewer)->get(route('projects.show', [
+            'token' => $this->project->token,
+            'view' => 'kanban',
+        ]));
+        $viewerResponse->assertOk()
+            ->assertSee('draggable="false"', false)
+            ->assertDontSee('aria-label="Edit '.$child->name.'"', false);
+    }
+
+    public function test_kanban_status_failure_returns_json_and_rolls_back_task_status(): void
+    {
+        $task = $this->createTask(['status' => 'to_do']);
+        $this->forceProgressFailure();
+
+        $this->actingAs($this->manager)
+            ->patchJson(route('tasks.updateStatus', $task->token), ['status' => 'in_progress'])
+            ->assertStatus(500)
+            ->assertJsonPath('message', 'Failed to update status.');
+
+        $this->assertSame('to_do', $task->fresh()->status);
+        $this->assertSame(0, TaskStatusHistory::query()->where('task_id', $task->id)->count());
+    }
+
+    public function test_project_gantt_payload_is_hierarchical_token_safe_and_uses_derived_progress_and_timeline(): void
+    {
+        $ordinaryRoot = $this->createTask([
+            'name' => 'Ordinary root',
+            'start_date' => '2026-01-02',
+            'due_date' => '2026-01-03',
+        ]);
+        $summary = $this->createTask([
+            'name' => 'Summary root',
+            'start_date' => '2026-01-10',
+            'due_date' => '2026-01-20',
+        ]);
+        $completedChild = $this->createTask([
+            'name' => 'Completed child',
+            'parent_task_id' => $summary->id,
+            'subtask_weight_percentage' => 40,
+            'status' => 'completed',
+            'start_date' => '2026-01-05',
+            'due_date' => '2026-01-08',
+        ]);
+        $middle = $this->createTask([
+            'name' => 'Middle summary',
+            'parent_task_id' => $summary->id,
+            'subtask_weight_percentage' => 60,
+            'start_date' => null,
+            'due_date' => null,
+        ]);
+        $grandchild = $this->createTask([
+            'name' => 'Nested leaf',
+            'parent_task_id' => $middle->id,
+            'subtask_weight_percentage' => 100,
+            'start_date' => '2026-01-12',
+            'due_date' => '2026-01-30',
+        ]);
+        $undatedLeaf = $this->createTask([
+            'name' => 'Undated leaf fallback',
+            'start_date' => null,
+            'due_date' => null,
+        ]);
+        $foreignTask = Task::factory()
+            ->for($this->otherProject)
+            ->for($this->manager, 'creator')
+            ->create(['name' => 'Foreign Gantt task']);
+
+        $payload = app(TaskGanttService::class)->forProject($this->project, true);
+        $items = collect($payload['data'])->keyBy('id');
+
+        $this->assertSame([
+            'task-'.$ordinaryRoot->id,
+            'task-'.$summary->id,
+            'task-'.$completedChild->id,
+            'task-'.$middle->id,
+            'task-'.$grandchild->id,
+            'task-'.$undatedLeaf->id,
+        ], collect($payload['data'])->pluck('id')->all());
+        $this->assertSame('task', $items['task-'.$ordinaryRoot->id]['type']);
+        $this->assertSame('project', $items['task-'.$summary->id]['type']);
+        $this->assertTrue($items['task-'.$summary->id]['readonly']);
+        $this->assertSame('task-'.$summary->id, $items['task-'.$completedChild->id]['parent']);
+        $this->assertSame('task-'.$middle->id, $items['task-'.$grandchild->id]['parent']);
+        $this->assertSame(0.4, $items['task-'.$summary->id]['progress']);
+        $this->assertSame('2026-01-05', $items['task-'.$summary->id]['start']);
+        $this->assertSame('2026-01-30', $items['task-'.$summary->id]['end']);
+        $this->assertSame($summary->token, $items['task-'.$completedChild->id]['parent_token']);
+        $this->assertSame(route('tasks.show', $grandchild->token), $items['task-'.$grandchild->id]['detail_url']);
+        $this->assertStringNotContainsString('/tasks/'.$grandchild->id, $items['task-'.$grandchild->id]['detail_url']);
+        $this->assertSame($undatedLeaf->created_at->toDateString(), $items['task-'.$undatedLeaf->id]['start']);
+        $this->assertSame($undatedLeaf->created_at->toDateString(), $items['task-'.$undatedLeaf->id]['end']);
+        $this->assertArrayNotHasKey('task-'.$foreignTask->id, $items->all());
+        $this->assertCount($items->count(), $items->unique('id'));
+    }
+
+    public function test_personal_gantt_includes_unique_unassigned_ancestors_without_unassigned_siblings(): void
+    {
+        $root = $this->createTask(['name' => 'Personal root context']);
+        $middle = $this->createTask([
+            'name' => 'Personal middle context',
+            'parent_task_id' => $root->id,
+            'subtask_weight_percentage' => 100,
+        ]);
+        $pivotLeaf = $this->createTask([
+            'name' => 'Pivot assigned nested leaf',
+            'parent_task_id' => $middle->id,
+            'subtask_weight_percentage' => 50,
+        ]);
+        $pivotLeaf->assignees()->attach($this->member->id);
+        $legacyLeaf = $this->createTask([
+            'name' => 'Legacy assigned nested leaf',
+            'parent_task_id' => $middle->id,
+            'subtask_weight_percentage' => 25,
+            'assignee_id' => $this->member->id,
+        ]);
+        $unassignedSibling = $this->createTask([
+            'name' => 'Unassigned sibling',
+            'parent_task_id' => $middle->id,
+            'subtask_weight_percentage' => 25,
+        ]);
+
+        $payload = app(TaskGanttService::class)->forUser($this->member);
+        $items = collect($payload['data']);
+
+        $this->assertEqualsCanonicalizing([
+            'task-'.$root->id,
+            'task-'.$middle->id,
+            'task-'.$pivotLeaf->id,
+            'task-'.$legacyLeaf->id,
+        ], $items->pluck('id')->all());
+        $this->assertSame(1, $items->where('id', 'task-'.$root->id)->count());
+        $this->assertSame(1, $items->where('id', 'task-'.$middle->id)->count());
+        $this->assertTrue($items->firstWhere('id', 'task-'.$root->id)['readonly']);
+        $this->assertTrue($items->firstWhere('id', 'task-'.$middle->id)['readonly']);
+        $this->assertFalse($items->contains('id', 'task-'.$unassignedSibling->id));
+    }
+
+    public function test_gantt_progress_uses_central_status_and_nested_hierarchy_resolvers(): void
+    {
+        $stopped = $this->createTask(['status' => 'stopped', 'stopped_progress' => 35]);
+        $cancelled = $this->createTask(['status' => 'cancelled']);
+        $parent = $this->createTask();
+        $this->createTask([
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 50,
+            'status' => 'completed',
+        ]);
+        $middle = $this->createTask([
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 50,
+        ]);
+        $this->createTask([
+            'parent_task_id' => $middle->id,
+            'subtask_weight_percentage' => 100,
+            'status' => 'cancelled',
+        ]);
+
+        $items = collect(app(TaskGanttService::class)->forProject($this->project, true)['data'])->keyBy('id');
+
+        $this->assertSame(0.35, $items['task-'.$stopped->id]['progress']);
+        $this->assertSame(0.0, $items['task-'.$cancelled->id]['progress']);
+        $this->assertSame(0.5, $items['task-'.$parent->id]['progress']);
+        $this->assertSame(0.0, $items['task-'.$middle->id]['progress']);
+    }
+
+    public function test_gantt_dependency_payload_keeps_valid_leaf_links_and_skips_invalid_legacy_links(): void
+    {
+        $predecessor = $this->createTask(['name' => 'Valid predecessor']);
+        $validTarget = $this->createTask([
+            'name' => 'Valid target',
+            'predecessor_id' => $predecessor->id,
+            'dependency_type' => 'SS',
+        ]);
+        $summary = $this->createTask(['name' => 'Summary predecessor']);
+        $invalidChild = $this->createTask([
+            'name' => 'Invalid child ancestor dependency',
+            'parent_task_id' => $summary->id,
+            'subtask_weight_percentage' => 100,
+            'predecessor_id' => $summary->id,
+        ]);
+        $summaryTarget = $this->createTask([
+            'name' => 'Summary target',
+            'predecessor_id' => $predecessor->id,
+        ]);
+        $this->createTask([
+            'parent_task_id' => $summaryTarget->id,
+            'subtask_weight_percentage' => 100,
+        ]);
+        $foreignPredecessor = Task::factory()
+            ->for($this->otherProject)
+            ->for($this->manager, 'creator')
+            ->create();
+        $crossProjectTarget = $this->createTask(['predecessor_id' => $foreignPredecessor->id]);
+
+        $links = collect(app(TaskGanttService::class)->forProject($this->project, true)['links']);
+
+        $this->assertSame([[
+            'id' => 'dependency-'.$validTarget->id,
+            'source' => 'task-'.$predecessor->id,
+            'target' => 'task-'.$validTarget->id,
+            'type' => '1',
+        ]], $links->all());
+        $this->assertFalse($links->contains('target', 'task-'.$invalidChild->id));
+        $this->assertFalse($links->contains('target', 'task-'.$summaryTarget->id));
+        $this->assertFalse($links->contains('target', 'task-'.$crossProjectTarget->id));
+    }
+
+    public function test_gantt_views_render_partials_hierarchy_context_empty_state_and_token_links(): void
+    {
+        $parent = $this->createTask(['name' => 'Rendered summary']);
+        $child = $this->createTask([
+            'name' => 'Rendered child',
+            'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 100,
+        ]);
+        $child->assignees()->attach($this->member->id);
+
+        $this->actingAs($this->manager)
+            ->get(route('projects.show', ['token' => $this->project->token, 'view' => 'gantt']))
+            ->assertOk()
+            ->assertSee('data-gantt-section', false)
+            ->assertSee('Summary Task')
+            ->assertSee('project_gantt_empty')
+            ->assertSee($child->token)
+            ->assertDontSee('/tasks/'.$child->id, false);
+
+        $this->actingAs($this->member)
+            ->get(route('tasks.index', ['view' => 'gantt']))
+            ->assertOk()
+            ->assertSee('personal_gantt_empty')
+            ->assertSee('gantt\/data', false)
+            ->assertSee('useFixedSummaryDates')
+            ->assertSee('Gantt tidak dapat dimuat.');
+    }
+
+    public function test_project_gantt_payload_query_count_stays_bounded_for_multiple_tasks(): void
+    {
+        $parent = $this->createTask();
+        foreach (range(1, 8) as $position) {
+            $this->createTask([
+                'parent_task_id' => $parent->id,
+                'subtask_weight_percentage' => 12.5,
+                'position' => $position,
+            ]);
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        app(TaskGanttService::class)->forProject($this->project->fresh(), true);
+        $queryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertLessThanOrEqual(20, $queryCount);
     }
 
     private function storePayload(array $overrides = []): array
