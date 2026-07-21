@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Notification;
 use App\Models\ProjectThread;
+use App\Services\TaskHierarchyService;
 
 class Project extends Model
 {
@@ -156,34 +157,9 @@ class Project extends Model
         return $this->roleForUser($user) === 'viewer';
     }
 
-    public function calculateProgress()
+    public function calculateProgress(): float
     {
-        $tasks = $this->tasks()
-            ->with(['statusWeight', 'statusHistory'])
-            ->whereNotIn('status', ['cancelled'])
-            ->get();
-
-        if ($tasks->isEmpty()) return 0;
-
-        $totalWeight = $tasks->sum('weight');
-        $totalEarnedValue = $tasks->sum(function ($task) {
-            if ($task->status === 'stopped') {
-
-                $prevStatus = $task->statusHistory
-                    ->sortByDesc('id')
-                    ->firstWhere('from_status', '!=', null)?->from_status ?? 'to_do';
-
-                $weightValue = \Illuminate\Support\Facades\DB::table('task_status_weights')
-                    ->where('status', $prevStatus)
-                    ->value('weight_value') ?? 0;
-
-                return $task->weight * $weightValue;
-            }
-
-            return $task->weight * ($task->statusWeight->weight_value ?? 0);
-        });
-
-        return $totalWeight > 0 ? ($totalEarnedValue / $totalWeight) * 100 : 0;
+        return app(TaskHierarchyService::class)->resolveProjectProgressPercentage($this);
     }
 
     protected static function booted(): void

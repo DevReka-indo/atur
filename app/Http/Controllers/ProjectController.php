@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\Task;
 use App\Models\Workspace;
 use App\Models\Notification;
+use App\Services\TaskHierarchyService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Services\ProjectProgressService;
@@ -16,6 +17,8 @@ use Illuminate\Support\Facades\DB;
 
 class ProjectController extends Controller
 {
+    public function __construct(private TaskHierarchyService $taskHierarchyService) {}
+
     // Resolve project by token (helper internal)
     private function findByToken(string $token): Project
     {
@@ -197,6 +200,7 @@ class ProjectController extends Controller
             'tasks.assignees',
             'tasks.assignee',
             'tasks.statusWeight',
+            'tasks.statusHistory',
             'activeBaseline.plannedProgress',
             'activeBaseline.taskBaselines',
             'actualProgress',
@@ -204,6 +208,13 @@ class ProjectController extends Controller
 
         $progress         = $project->calculateProgress();
         $availableMembers = $project->workspace->members->whereNotIn('id', $project->members->pluck('id'));
+        $tasksByParent = $project->tasks->groupBy(fn (Task $task): int => (int) ($task->parent_task_id ?? 0));
+        $taskHierarchyRoots = $tasksByParent->get(0, collect())->values();
+        $visitedTaskIds = [];
+
+        foreach ($taskHierarchyRoots as $rootTask) {
+            $this->prepareTaskHierarchy($rootTask, $tasksByParent, 0, $visitedTaskIds);
+        }
 
         $baseline        = $project->activeBaseline;
         $plannedProgress = $baseline
@@ -259,7 +270,7 @@ class ProjectController extends Controller
             return [$member->id => $count];
         });
 
-        return view('projects.show', compact('project', 'progress', 'availableMembers', 'baseline', 'chartData', 'overloadedMemberIds', 'memberTaskCounts'));
+        return view('projects.show', compact('project', 'progress', 'availableMembers', 'baseline', 'chartData', 'overloadedMemberIds', 'memberTaskCounts', 'taskHierarchyRoots'));
     }
 
     public function edit(string $token)
@@ -580,5 +591,31 @@ class ProjectController extends Controller
             'data'  => $tasks,
             'links' => [],
         ]);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, \Illuminate\Support\Collection<int, Task>>  $tasksByParent
+     * @param  array<int, true>  $visitedTaskIds
+     */
+    private function prepareTaskHierarchy(Task $task, \Illuminate\Support\Collection $tasksByParent, int $depth, array &$visitedTaskIds): void
+    {
+        if (isset($visitedTaskIds[$task->id]) || $depth > TaskHierarchyService::MAXIMUM_DEPTH) {
+            $task->setRelation('subtasks', collect());
+
+            return;
+        }
+
+        $visitedTaskIds[$task->id] = true;
+        $subtasks = $tasksByParent->get($task->id, collect())->values();
+        $task->setRelation('subtasks', $subtasks);
+        $task->setAttribute('hierarchy_depth', $depth);
+        $task->setAttribute('subtasks_count', $subtasks->count());
+        $task->setAttribute('subtask_weight_total', round((float) $subtasks->sum('subtask_weight_percentage'), 2));
+
+        foreach ($subtasks as $subtask) {
+            $this->prepareTaskHierarchy($subtask, $tasksByParent, $depth + 1, $visitedTaskIds);
+        }
+
+        $task->setAttribute('hierarchy_progress_percentage', round($this->taskHierarchyService->resolveProgressPercentage($task), 2));
     }
 }

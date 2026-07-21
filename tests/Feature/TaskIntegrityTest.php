@@ -57,6 +57,7 @@ class TaskIntegrityTest extends TestCase
         $response = $this->actingAs($this->manager)->post('/tasks', $this->validStorePayload([
             'name' => 'Valid related task',
             'parent_task_id' => $parent->id,
+            'subtask_weight_percentage' => 100,
             'predecessor_id' => $predecessor->id,
         ]));
 
@@ -348,6 +349,7 @@ class TaskIntegrityTest extends TestCase
             $table->string('status')->default('to_do');
             $table->string('priority')->default('medium');
             $table->decimal('weight', 10, 2)->default(1);
+            $table->decimal('subtask_weight_percentage', 5, 2)->nullable();
             $table->date('start_date')->nullable();
             $table->date('due_date')->nullable();
             $table->integer('position')->default(0);

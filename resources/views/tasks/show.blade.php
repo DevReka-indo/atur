@@ -26,18 +26,10 @@
             default => 'bg-slate-100 text-slate-700',
         };
 
-        $progressPercentage = match ($task->status) {
-            'to_do' => 10,
-            'in_progress' => 50,
-            'review' => 80,
-            'completed' => 100,
-            'stopped' => 0,
-            'cancelled' => 0,
-            default => 0,
-        };
+        $progressPercentage = $hierarchyProgressPercentage;
 
         $weight = $task->weight ?? 1;
-        $earnedValue = $task->earned_value ?? round(($progressPercentage / 100) * $weight, 2);
+        $earnedValue = $hierarchyEarnedValue;
 
         $userColors = [
             'from-indigo-400 to-purple-500',
@@ -62,7 +54,7 @@
             return $userColors[abs($index)];
         };
 
-        $canChangeTaskStatus = $canContribute && (Auth::user()->role ?? 'member') !== 'viewer';
+        $canChangeTaskStatus = $canContribute && !$taskHasSubtasks && (Auth::user()->role ?? 'member') !== 'viewer';
     @endphp
 
     <div class="fixed inset-0 bg-gradient-to-br from-gray-50 to-gray-100/50 -z-10"></div>
@@ -73,21 +65,10 @@
         <div class="bg-white border border-gray-200 rounded-2xl shadow-sm">
             <div class="px-6 py-5">
 
-                {{-- Breadcrumb --}}
-                <nav class="flex items-center gap-1.5 text-sm mb-4" aria-label="Breadcrumb">
-                    <a href="{{ route('workspaces.show', $task->project->workspace->token) }}"
-                        class="inline-flex items-center gap-1.5 text-gray-500 hover:text-indigo-600 transition-colors">
-                        <i class="fa-solid fa-folder-open text-gray-400"></i>
-                        <span class="font-medium">{{ $task->project->workspace->name }}</span>
-                    </a>
-                    <i class="fa-solid fa-chevron-right text-xs text-gray-300"></i>
-                    <a href="{{ route('projects.show', $task->project->token) }}"
-                        class="text-gray-500 hover:text-indigo-600 transition-colors font-medium">
-                        {{ $task->project->name }}
-                    </a>
-                    <i class="fa-solid fa-chevron-right text-xs text-gray-300"></i>
-                    <span class="text-gray-800 font-semibold">{{ $task->name }}</span>
-                </nav>
+                @include('tasks.partials._breadcrumb', [
+                    'task' => $task,
+                    'hierarchyAncestors' => $hierarchyAncestors,
+                ])
 
                 {{-- Title & Actions --}}
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -140,6 +121,9 @@
                                         <span class="w-1.5 h-1.5 rounded-full bg-current opacity-75"></span>
                                         {{ str($task->status)->replace('_', ' ')->title() }}
                                     </span>
+                                    @if ($taskHasSubtasks)
+                                        <span class="text-xs font-semibold text-indigo-600">Status mengikuti subtask</span>
+                                    @endif
                                 @endif
                             </div>
 
@@ -154,6 +138,12 @@
 
                     {{-- Action Buttons --}}
                     <div class="flex items-center gap-3 flex-shrink-0">
+                        @if ($canAddSubtask)
+                            <a href="{{ route('tasks.create', ['parent' => $task->token]) }}"
+                                class="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-2.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100">
+                                <i class="fa-solid fa-plus"></i> Tambah Subtask
+                            </a>
+                        @endif
                         @if ($canContribute)
                             <a href="{{ route('tasks.edit', $task->token) }}"
                                 class="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white
@@ -176,6 +166,20 @@
                 </div>
             </div>
         </div>
+
+        @include('tasks.partials._hierarchy-summary', [
+            'task' => $task,
+            'taskDepth' => $taskDepth,
+            'taskHasSubtasks' => $taskHasSubtasks,
+            'hierarchyProgressPercentage' => $hierarchyProgressPercentage,
+        ])
+
+        @include('tasks.partials._subtask-list', [
+            'task' => $task,
+            'taskHasSubtasks' => $taskHasSubtasks,
+            'canAddSubtask' => $canAddSubtask,
+            'canContribute' => $canContribute,
+        ])
 
         {{-- ── TAB BAR ── --}}
         <div class="bg-white border border-gray-200 rounded-2xl shadow-sm">

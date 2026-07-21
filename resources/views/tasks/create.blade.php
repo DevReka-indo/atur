@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', 'Create Task')
+@section('title', $parentTask ? 'Tambah Subtask' : 'Create Task')
 
 @section('content')
     <div class="fixed inset-0 bg-gradient-to-br from-gray-50 to-gray-100/50 -z-10"></div>
@@ -12,15 +12,17 @@
             <i class="fa-solid fa-chevron-right text-xs text-gray-400"></i>
             <a href="{{ route('tasks.index') }}" class="hover:text-indigo-600 transition-colors">Tasks</a>
             <i class="fa-solid fa-chevron-right text-xs text-gray-400"></i>
-            <span class="text-gray-700 font-medium">Create</span>
+            <span class="text-gray-700 font-medium">{{ $parentTask ? 'Tambah Subtask' : 'Create' }}</span>
         </nav>
 
         {{-- Header --}}
         <div class="mb-8">
             <h1 class="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
-                Create Task
+                {{ $parentTask ? 'Tambah Subtask' : 'Create Task' }}
             </h1>
-            <p class="text-gray-600 mt-2">Add a new task and set the details of its execution.</p>
+            <p class="text-gray-600 mt-2">
+                {{ $parentTask ? 'Tambahkan pekerjaan turunan dengan bobot terhadap parent.' : 'Add a new task and set the details of its execution.' }}
+            </p>
         </div>
 
         {{-- Card --}}
@@ -32,6 +34,9 @@
             <div class="p-6 sm:p-8">
                 <form method="POST" action="{{ route('tasks.store') }}" class="space-y-6">
                     @csrf
+                    @if ($parentTask)
+                        <input type="hidden" name="parent_task_id" value="{{ $parentTask->id }}">
+                    @endif
                     @if ($errors->any())
                         <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
                             <ul>
@@ -41,6 +46,13 @@
                             </ul>
                         </div>
                     @endif
+
+                    @include('tasks.partials._parent-context', [
+                        'parentTask' => $parentTask,
+                        'parentDepth' => $parentDepth,
+                        'usedSubtaskWeight' => $usedSubtaskWeight,
+                        'remainingSubtaskWeight' => $remainingSubtaskWeight,
+                    ])
                     {{-- GRID LAYOUT: 2 KOLOM --}}
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
@@ -162,6 +174,8 @@
                                     class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500">
                                     @foreach (['to_do', 'in_progress', 'review', 'completed', 'stopped', 'cancelled'] as $s)
                                         <option value="{{ $s }}"
+                                            class="{{ $parentTask && $s !== 'to_do' ? 'js-subtask-status-option' : '' }}"
+                                            {{ $parentTask && $s !== 'to_do' ? 'disabled' : '' }}
                                             {{ old('status', 'to_do') === $s ? 'selected' : '' }}>
                                             {{ str($s)->replace('_', ' ')->title() }}
                                         </option>
@@ -217,16 +231,16 @@
                                 </select>
                             </div>
 
-                            {{-- Weight --}}
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-800 mb-2">
-                                    Weight <span class="text-red-500">*</span>
-                                </label>
-                                <input type="number" name="weight" step="0.01" min="0.01"
-                                    value="{{ old('weight', '1.00') }}"
-                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500"
-                                    required>
-                            </div>
+                            @include('tasks.partials._weight-readiness', [
+                                'isSubtask' => $parentTask !== null,
+                                'siblingWeightBase' => $usedSubtaskWeight,
+                                'remainingSubtaskWeight' => $remainingSubtaskWeight,
+                                'subtaskWeightValue' => null,
+                                'remainingAfterInput' => max(0, $remainingSubtaskWeight - (float) old('subtask_weight_percentage', 0)),
+                                'legacyWeight' => '1.00',
+                                'rootWeightValue' => old('weight', '1.00'),
+                                'statusUnlocked' => false,
+                            ])
 
                             {{-- Dates --}}
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -272,10 +286,10 @@
                         <button type="submit"
                             class="inline-flex items-center justify-center px-8 py-3 text-white font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition-all duration-300 transform hover:-translate-y-0.5">
                             <i class="fa-solid fa-check mr-2"></i>
-                            Create Task
+                            {{ $parentTask ? 'Tambah Subtask' : 'Create Task' }}
                         </button>
 
-                        <a href="{{ route('tasks.index') }}"
+                        <a href="{{ $parentTask ? route('tasks.show', $parentTask->token) : route('tasks.index') }}"
                             class="inline-flex items-center justify-center px-8 py-3 text-gray-700 font-medium rounded-xl border border-gray-300 bg-white hover:bg-gray-50 transition-all duration-200">
                             <i class="fa-solid fa-xmark mr-2"></i>
                             Cancel
@@ -559,4 +573,6 @@
             });
         </script>
     @endpush
+
+    @include('tasks.partials._scripts')
 @endsection

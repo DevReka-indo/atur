@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\TaskHierarchyService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -20,6 +21,7 @@ class Task extends Model
         'status',
         'priority',
         'weight',
+        'subtask_weight_percentage',
         'start_date',
         'due_date',
         'position',
@@ -33,6 +35,7 @@ class Task extends Model
 
     protected $casts = [
         'weight' => 'decimal:2',
+        'subtask_weight_percentage' => 'decimal:2',
         'start_date' => 'date',
         'due_date' => 'date',
         'completed_at' => 'datetime',
@@ -48,11 +51,14 @@ class Task extends Model
         return $this->hasMany(TaskAttachment::class);
     }
 
-    public function getEarnedValueAttribute()
+    public function getEarnedValueAttribute(): float
     {
-        $statusWeight = $this->statusWeight;
+        return $this->projectEarnedValue(app(TaskHierarchyService::class));
+    }
 
-        return $this->weight * ($statusWeight ? $statusWeight->weight_value : 0);
+    public function projectEarnedValue(TaskHierarchyService $taskHierarchyService): float
+    {
+        return $taskHierarchyService->resolveEarnedContribution($this);
     }
 
     public function comments()

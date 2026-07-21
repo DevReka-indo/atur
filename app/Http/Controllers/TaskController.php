@@ -2,29 +2,35 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Task;
-use App\Models\Project;
-use App\Models\TaskStatusHistory;
+use App\Jobs\SendEmailNotification;
 use App\Models\ActivityLog;
 use App\Models\Notification;
+use App\Models\Project;
+use App\Models\Task;
+use App\Models\TaskAttachment;
+use App\Models\TaskComment;
+use App\Models\TaskStatusHistory;
+use App\Models\User;
+use App\Services\ProjectProgressService;
+use App\Services\TaskHierarchyService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use App\Models\TaskComment;
-use App\Models\TaskAttachment;
-use App\Services\ProjectProgressService;
 use Illuminate\Support\Facades\Storage;
-use Carbon\Carbon;
-use App\Jobs\SendEmailNotification;
-use App\Models\User;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
-use Illuminate\Http\Response;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 class TaskController extends Controller
 {
+    public function __construct(
+        private TaskHierarchyService $taskHierarchyService,
+        private ProjectProgressService $projectProgressService,
+    ) {}
+
     // task token
     private function findByToken(string $token): Task
     {
@@ -62,7 +68,8 @@ class TaskController extends Controller
         $status = $request->get('status', 'all');
 
         $query = Task::query()
-            ->with(['project.workspace', 'assignees', 'assignee', 'statusWeight', 'subtasks'])
+            ->with(['project.workspace', 'assignees', 'assignee', 'statusWeight', 'parent:id,token,name,parent_task_id'])
+            ->withCount('subtasks')
             ->assignedToUser($user->id);
 
         if ($status !== 'all') {
@@ -86,11 +93,35 @@ class TaskController extends Controller
     public function create(Request $request)
     {
         $projectToken = $request->query('project_token');
+        $parentToken = $request->query('parent');
         $project = null;
+        $parentTask = null;
+        $parentDepth = null;
+        $usedSubtaskWeight = 0.0;
+        $remainingSubtaskWeight = 100.0;
 
-        if ($projectToken) {
+        if ($parentToken) {
+            $parentTask = Task::query()
+                ->where('token', $parentToken)
+                ->with(['project.workspace', 'project.members', 'parent.parent', 'subtasks'])
+                ->withCount('subtasks')
+                ->firstOrFail();
+            $project = $parentTask->project;
+
+            if (! $project->canContribute(Auth::user())) {
+                abort(403, 'Only manager/member can create subtasks.');
+            }
+
+            $parentDepth = $this->taskHierarchyService->hierarchyDepth($parentTask);
+            if ($parentDepth >= TaskHierarchyService::MAXIMUM_DEPTH) {
+                abort(422, 'Task ini sudah berada pada kedalaman hierarchy maksimum.');
+            }
+
+            $usedSubtaskWeight = round((float) $parentTask->subtasks->sum('subtask_weight_percentage'), 2);
+            $remainingSubtaskWeight = max(0, round(100 - $usedSubtaskWeight, 2));
+        } elseif ($projectToken) {
             $project = Project::where('token', $projectToken)->firstOrFail();
-            if (!$project->canContribute(Auth::user())) {
+            if (! $project->canContribute(Auth::user())) {
                 abort(403, 'Only manager/member can create tasks.');
             }
         }
@@ -101,27 +132,43 @@ class TaskController extends Controller
             ->get();
         $assignees = $project ? $project->members : collect();
 
-        return view('tasks.create', compact('projects', 'project', 'assignees'));
+        return view('tasks.create', compact(
+            'projects',
+            'project',
+            'assignees',
+            'parentTask',
+            'parentDepth',
+            'usedSubtaskWeight',
+            'remainingSubtaskWeight',
+        ));
     }
 
     public function store(Request $request)
     {
         $projectId = $request->integer('project_id');
 
-        $validated = $request->validate(
+        $validator = Validator::make(
+            $request->all(),
             [
                 'project_id' => ['required', 'exists:projects,id'],
-                'parent_task_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $projectId))],
+                'parent_task_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn ($query) => $query->where('project_id', $projectId))],
                 'name' => ['required', 'string', 'max:500'],
                 'description' => ['nullable', 'string'],
                 'assignee_ids' => ['nullable', 'array'],
-                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn($query) => $query->where('project_id', $projectId))],
+                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn ($query) => $query->where('project_id', $projectId))],
                 'status' => ['required', 'in:to_do,in_progress,review,completed,stopped,cancelled'],
                 'priority' => ['required', 'in:low,medium,high,urgent'],
                 'weight' => ['required', 'numeric', 'min:0.01'],
+                'subtask_weight_percentage' => [
+                    $request->filled('parent_task_id') ? 'required' : 'prohibited',
+                    'nullable',
+                    'numeric',
+                    'gt:0',
+                    'lte:100',
+                ],
                 'start_date' => ['nullable', 'date'],
                 'due_date' => ['nullable', 'date', 'after_or_equal:start_date'],
-                'predecessor_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $projectId))],
+                'predecessor_id' => ['nullable', Rule::exists('tasks', 'id')->where(fn ($query) => $query->where('project_id', $projectId))],
                 'dependency_type' => ['nullable', 'in:FS,SS,FF,SF'],
             ],
             [
@@ -132,83 +179,139 @@ class TaskController extends Controller
             ],
         );
 
+        $validator->after(function (\Illuminate\Validation\Validator $validator) use ($request, $projectId): void {
+            if ($validator->errors()->isNotEmpty()) {
+                return;
+            }
+
+            $context = new Task([
+                'project_id' => $projectId,
+                'parent_task_id' => $request->integer('parent_task_id') ?: null,
+                'subtask_weight_percentage' => $request->input('subtask_weight_percentage'),
+                'status' => 'to_do',
+            ]);
+
+            $this->appendHierarchyValidationErrors($validator, function () use ($context, $request): void {
+                if ($context->parent_task_id !== null) {
+                    $parent = Task::query()->findOrFail($context->parent_task_id);
+                    $this->taskHierarchyService->validateParentCandidate($context, $parent);
+                }
+
+                $this->taskHierarchyService->validateSubtaskWeight($context);
+                $this->taskHierarchyService->validateStatusTransition($context, $request->string('status')->toString());
+
+                if ($request->filled('predecessor_id')) {
+                    $predecessor = Task::query()->findOrFail($request->integer('predecessor_id'));
+                    $this->taskHierarchyService->validatePredecessorCandidate($context, $predecessor);
+                }
+            });
+        });
+
+        $validated = $validator->validate();
+
         $project = Project::findOrFail($validated['project_id']);
-        if (!$project->canContribute(Auth::user())) {
+        if (! $project->canContribute(Auth::user())) {
             abort(403, 'Only manager/member can create tasks.');
         }
 
-        DB::beginTransaction();
         try {
-            $task = Task::create([
-                'project_id' => $validated['project_id'],
-                'parent_task_id' => $validated['parent_task_id'] ?? null,
-                'name' => $validated['name'],
-                'description' => $validated['description'],
-                'status' => $validated['status'],
-                'priority' => $validated['priority'],
-                'weight' => $validated['weight'],
-                'start_date' => $validated['start_date'],
-                'due_date' => $validated['due_date'],
-                'predecessor_id' => $validated['predecessor_id'] ?? null,
-                'dependency_type' => $validated['dependency_type'] ?? 'FS',
-                'created_by' => Auth::id(),
-            ]);
-
-            $assigneeIds = $validated['assignee_ids'] ?? [];
-            $task->assignees()->sync($assigneeIds);
-
-            TaskStatusHistory::create([
-                'task_id' => $task->id,
-                'from_status' => null,
-                'to_status' => $validated['status'],
-                'changed_by' => Auth::id(),
-            ]);
-
-            ActivityLog::create([
-                'user_id' => Auth::id(),
-                'action' => 'created',
-                'entity_type' => 'task',
-                'entity_id' => $task->id,
-                'description' => 'Created task: ' . $task->name,
-            ]);
-
-            foreach ($assigneeIds as $assigneeId) {
-                if ($assigneeId != Auth::id()) {
-                    Notification::create([
-                        'user_id' => $assigneeId,
-                        'type' => 'assignment',
-                        'title' => 'Task Baru Ditugaskan',
-                        'message' => 'Anda mendapat task baru: "' . $task->name . '" di project ' . $project->name,
-                        'task_id' => $task->id,
-                        'project_id' => $project->id,
-                    ]);
-
-                    // Kirim email via Job
-                    $recipient = User::find($assigneeId);
-                    if ($recipient) {
-                        SendEmailNotification::dispatch($recipient, 'Task Baru Ditugaskan', 'Anda mendapat task baru: "' . $task->name . '" di project ' . $project->name, route('tasks.show', $task->token));
-                    }
+            $task = DB::transaction(function () use ($validated, $project): Task {
+                $context = new Task([
+                    'project_id' => $validated['project_id'],
+                    'parent_task_id' => $validated['parent_task_id'] ?? null,
+                    'subtask_weight_percentage' => $validated['subtask_weight_percentage'] ?? null,
+                    'status' => 'to_do',
+                ]);
+                if ($context->parent_task_id !== null) {
+                    $parent = Task::query()->lockForUpdate()->findOrFail($context->parent_task_id);
+                    $this->taskHierarchyService->validateParentCandidate($context, $parent);
                 }
-            }
+                $this->taskHierarchyService->validateSubtaskWeight($context);
+                $this->taskHierarchyService->validateStatusTransition($context, $validated['status']);
 
-            if ($task->priority === 'urgent') {
+                if (! empty($validated['predecessor_id'])) {
+                    $predecessor = Task::query()->lockForUpdate()->findOrFail($validated['predecessor_id']);
+                    $this->taskHierarchyService->validatePredecessorCandidate($context, $predecessor);
+                }
+
+                $task = Task::create([
+                    'project_id' => $validated['project_id'],
+                    'parent_task_id' => $validated['parent_task_id'] ?? null,
+                    'name' => $validated['name'],
+                    'description' => $validated['description'] ?? null,
+                    'status' => $validated['status'],
+                    'priority' => $validated['priority'],
+                    'weight' => $validated['weight'],
+                    'subtask_weight_percentage' => $validated['subtask_weight_percentage'] ?? null,
+                    'start_date' => $validated['start_date'] ?? null,
+                    'due_date' => $validated['due_date'] ?? null,
+                    'predecessor_id' => $validated['predecessor_id'] ?? null,
+                    'dependency_type' => $validated['dependency_type'] ?? 'FS',
+                    'created_by' => Auth::id(),
+                ]);
+
+                $assigneeIds = $validated['assignee_ids'] ?? [];
+                $task->assignees()->sync($assigneeIds);
+
+                TaskStatusHistory::create([
+                    'task_id' => $task->id,
+                    'from_status' => null,
+                    'to_status' => $validated['status'],
+                    'changed_by' => Auth::id(),
+                ]);
+
+                ActivityLog::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'created',
+                    'entity_type' => 'task',
+                    'entity_id' => $task->id,
+                    'description' => 'Created task: '.$task->name,
+                ]);
+
                 foreach ($assigneeIds as $assigneeId) {
-                    $assignee = User::find($assigneeId);
-                    if ($assignee) {
-                        SendEmailNotification::dispatch($assignee, 'Urgent Task Alert', 'Task "' . $task->name . '" is marked as urgent and needs immediate attention!', route('tasks.show', $task->token));
+                    if ($assigneeId != Auth::id()) {
+                        $message = 'Anda mendapat task baru: "'.$task->name.'" di project '.$project->name;
+                        Notification::create([
+                            'user_id' => $assigneeId,
+                            'type' => 'assignment',
+                            'title' => 'Task Baru Ditugaskan',
+                            'message' => $message,
+                            'task_id' => $task->id,
+                            'project_id' => $project->id,
+                        ]);
+
+                        $recipient = User::find($assigneeId);
+                        if ($recipient) {
+                            $this->queueEmailAfterCommit($recipient, 'Task Baru Ditugaskan', $message, $task);
+                        }
                     }
                 }
-            }
-            app(ProjectProgressService::class)->syncPlannedProgress($project);
-            app(ProjectProgressService::class)->recordActualProgress($project);
 
-            DB::commit();
+                if ($task->priority === 'urgent') {
+                    foreach ($assigneeIds as $assigneeId) {
+                        $assignee = User::find($assigneeId);
+                        if ($assignee) {
+                            $this->queueEmailAfterCommit($assignee, 'Urgent Task Alert', 'Task "'.$task->name.'" is marked as urgent and needs immediate attention!', $task);
+                        }
+                    }
+                }
+
+                if ($task->parent_task_id !== null) {
+                    $this->taskHierarchyService->synchronizeAncestors($task, Auth::id());
+                }
+
+                $this->projectProgressService->syncPlannedProgress($project);
+                $this->projectProgressService->recordActualProgress($project);
+
+                return $task;
+            });
 
             return redirect()->route('projects.show', $project->token)->with('success', 'Task created successfully!');
-        } catch (\Exception $e) {
-            DB::rollBack();
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (Throwable $e) {
             return back()
-                ->withErrors(['error' => 'Failed to create task: ' . $e->getMessage()])
+                ->withErrors(['error' => 'Failed to create task: '.$e->getMessage()])
                 ->withInput();
         }
     }
@@ -216,14 +319,15 @@ class TaskController extends Controller
     public function edit(string $token)
     {
         $task = $this->findByToken($token);
-        $task->load('project', 'assignees', 'assignee');
+        $task->load(['project.workspace', 'assignees', 'assignee', 'parent.parent', 'subtasks']);
+        $task->loadCount('subtasks');
 
-        if (!$task->project) {
+        if (! $task->project) {
             abort(404, 'Task tidak memiliki project.');
         }
 
-        if (!$task->project->isMember(Auth::user())) {
-            abort(403);
+        if (! $task->project->canContribute(Auth::user())) {
+            abort(403, 'Viewer can only view this task.');
         }
 
         session(['task_back_url' => url()->previous()]);
@@ -231,8 +335,34 @@ class TaskController extends Controller
         $projects = Auth::user()->projects;
         $assignees = $task->project->members;
         $back_url = url()->previous();
+        $taskDepth = $this->taskHierarchyService->hierarchyDepth($task);
+        $siblingWeightWithoutTask = $task->parent_task_id === null
+            ? 0.0
+            : round((float) Task::query()
+                ->where('parent_task_id', $task->parent_task_id)
+                ->whereKeyNot($task->id)
+                ->sum('subtask_weight_percentage'), 2);
+        $remainingSubtaskWeight = max(0, round(100 - $siblingWeightWithoutTask, 2));
+        $totalSiblingWeight = $task->parent_task_id === null
+            ? 0.0
+            : round($siblingWeightWithoutTask + (float) ($task->subtask_weight_percentage ?? 0), 2);
+        $taskHasSubtasks = $task->subtasks_count > 0;
+        $subtaskStatusReady = $task->parent_task_id === null
+            || $task->status !== 'to_do'
+            || $totalSiblingWeight === 100.0;
 
-        return view('tasks.edit', compact('task', 'projects', 'assignees', 'back_url'));
+        return view('tasks.edit', compact(
+            'task',
+            'projects',
+            'assignees',
+            'back_url',
+            'taskDepth',
+            'siblingWeightWithoutTask',
+            'remainingSubtaskWeight',
+            'totalSiblingWeight',
+            'taskHasSubtasks',
+            'subtaskStatusReady',
+        ));
     }
 
     public function show(string $token)
@@ -240,40 +370,90 @@ class TaskController extends Controller
         $task = $this->findByToken($token);
 
         $isSuperAdmin = Auth::user()->isSuperAdmin();
-        if (!$isSuperAdmin && !$task->project->isMember(Auth::user())) {
+        if (! $isSuperAdmin && ! $task->project->isMember(Auth::user())) {
             abort(403, 'You do not have access to this task.');
         }
 
-        $task->load(['project.workspace', 'assignees', 'assignee', 'creator', 'statusWeight', 'subtasks.assignees', 'subtasks.assignee', 'comments.user', 'attachments.uploader', 'statusHistory.changer']);
+        $task->load([
+            'project.workspace',
+            'assignees',
+            'assignee',
+            'creator',
+            'parent.parent',
+            'statusWeight',
+            'statusHistory.changer',
+            'subtasks.assignees',
+            'subtasks.assignee',
+            'subtasks.statusWeight',
+            'subtasks.statusHistory',
+            'subtasks.subtasks.assignees',
+            'subtasks.subtasks.assignee',
+            'subtasks.subtasks.statusWeight',
+            'subtasks.subtasks.statusHistory',
+            'comments.user',
+            'attachments.uploader',
+        ]);
+        $task->loadCount('subtasks');
+
+        $taskDepth = $this->taskHierarchyService->hierarchyDepth($task);
+        $hierarchyAncestors = $this->hierarchyAncestors($task);
+        $visitedTaskIds = [];
+        $this->decorateHierarchyTask($task, $taskDepth, $visitedTaskIds);
+        $taskHasSubtasks = $task->subtasks_count > 0;
+        $canAddSubtask = $task->project->canContribute(Auth::user())
+            && $taskDepth < TaskHierarchyService::MAXIMUM_DEPTH;
+        $hierarchyProgressPercentage = (float) $task->getAttribute('hierarchy_progress_percentage');
+        $hierarchyEarnedValue = $this->taskHierarchyService->resolveEarnedContribution($task);
 
         // Deteksi dari mana task diakses
-        $fromMyTask = str_contains(url()->previous(), '/tasks') && !str_contains(url()->previous(), '/projects');
+        $fromMyTask = str_contains(url()->previous(), '/tasks') && ! str_contains(url()->previous(), '/projects');
 
-        return view('tasks.show', compact('task', 'fromMyTask'));
+        return view('tasks.show', compact(
+            'task',
+            'fromMyTask',
+            'taskDepth',
+            'hierarchyAncestors',
+            'taskHasSubtasks',
+            'canAddSubtask',
+            'hierarchyProgressPercentage',
+            'hierarchyEarnedValue',
+        ));
     }
 
     public function update(Request $request, string $token)
     {
         $task = $this->findByToken($token);
 
-        if (!$task->project->canContribute(Auth::user())) {
+        if (! $task->project->canContribute(Auth::user())) {
             abort(403, 'Viewer can only view this task.');
         }
 
+        $validationData = $request->all();
+        if ($task->parent_task_id !== null && ! array_key_exists('subtask_weight_percentage', $validationData)) {
+            $validationData['subtask_weight_percentage'] = $task->subtask_weight_percentage;
+        }
+
         $validator = Validator::make(
-            $request->all(),
+            $validationData,
             [
                 'parent_task_id' => ['prohibited'],
                 'name' => ['required', 'string', 'max:500'],
                 'description' => ['nullable', 'string'],
                 'assignee_ids' => ['nullable', 'array'],
-                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn($query) => $query->where('project_id', $task->project_id))],
+                'assignee_ids.*' => ['distinct', Rule::exists('project_members', 'user_id')->where(fn ($query) => $query->where('project_id', $task->project_id))],
                 'status' => ['required', 'in:to_do,in_progress,review,completed,stopped,cancelled'],
                 'priority' => ['required', 'in:low,medium,high,urgent'],
                 'weight' => ['required', 'numeric', 'min:0.01'],
+                'subtask_weight_percentage' => [
+                    $task->parent_task_id !== null ? 'required' : 'prohibited',
+                    'nullable',
+                    'numeric',
+                    'gt:0',
+                    'lte:100',
+                ],
                 'start_date' => ['nullable', 'date'],
                 'due_date' => ['nullable', 'date', 'after_or_equal:start_date'],
-                'predecessor_id' => ['nullable', Rule::notIn([$task->id]), Rule::exists('tasks', 'id')->where(fn($query) => $query->where('project_id', $task->project_id))],
+                'predecessor_id' => ['nullable', Rule::notIn([$task->id]), Rule::exists('tasks', 'id')->where(fn ($query) => $query->where('project_id', $task->project_id))],
                 'dependency_type' => ['nullable', 'in:FS,SS,FF,SF'],
             ],
             [
@@ -285,141 +465,145 @@ class TaskController extends Controller
             ],
         );
 
-        $validator->after(function (\Illuminate\Validation\Validator $validator) use ($request, $task): void {
-            if (!$request->filled('predecessor_id') || $validator->errors()->has('predecessor_id')) {
+        $validator->after(function (\Illuminate\Validation\Validator $validator) use ($validationData, $task): void {
+            if ($validator->errors()->isNotEmpty()) {
                 return;
             }
 
-            if ($this->wouldCreateCircularDependency($task, $request->integer('predecessor_id'))) {
-                $validator->errors()->add('predecessor_id', 'The selected predecessor creates a circular dependency.');
-            }
+            $candidate = clone $task;
+            $candidate->subtask_weight_percentage = $validationData['subtask_weight_percentage'] ?? null;
+
+            $this->appendHierarchyValidationErrors($validator, function () use ($candidate, $validationData, $task): void {
+                $this->taskHierarchyService->validateSubtaskWeight($candidate);
+
+                if ($validationData['status'] !== $task->status) {
+                    $this->taskHierarchyService->assertManualStatusAllowed($task);
+                    $this->taskHierarchyService->validateStatusTransition($candidate, $validationData['status']);
+                }
+
+                if (! empty($validationData['predecessor_id'])) {
+                    $predecessor = Task::query()->findOrFail((int) $validationData['predecessor_id']);
+                    $this->taskHierarchyService->validatePredecessorCandidate($task, $predecessor);
+
+                    if ($this->wouldCreateCircularDependency($task, $predecessor->id)) {
+                        throw ValidationException::withMessages([
+                            'predecessor_id' => 'The selected predecessor creates a circular dependency.',
+                        ]);
+                    }
+                }
+            });
         });
 
         $validated = $validator->validate();
 
-        DB::beginTransaction();
         try {
-            $oldStatus = $task->status;
-            $oldAssigneeIds = $task->assignees->pluck('id')->toArray();
-            $changes = [];
+            DB::transaction(function () use ($validated, $task): void {
+                $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+                $lockedTask->load(['assignees', 'project']);
+                $candidate = clone $lockedTask;
+                $candidate->subtask_weight_percentage = $validated['subtask_weight_percentage'] ?? null;
+                $this->taskHierarchyService->validateSubtaskWeight($candidate);
 
-            foreach ($validated as $key => $value) {
-                if ($key === 'assignee_ids') {
-                    continue;
-                }
-                if ($task->{$key} != $value) {
-                    $changes[$key] = ['old' => $task->{$key}, 'new' => $value];
-                }
-            }
+                if (! empty($validated['predecessor_id'])) {
+                    $predecessor = Task::query()->lockForUpdate()->findOrFail($validated['predecessor_id']);
+                    $this->taskHierarchyService->validatePredecessorCandidate($lockedTask, $predecessor);
 
-            $task->update(
-                array_merge(
+                    if ($this->wouldCreateCircularDependency($lockedTask, $predecessor->id)) {
+                        throw ValidationException::withMessages([
+                            'predecessor_id' => 'The selected predecessor creates a circular dependency.',
+                        ]);
+                    }
+                }
+
+                $oldStatus = $lockedTask->getOriginal('status');
+                $oldAssigneeIds = $lockedTask->assignees->pluck('id')->all();
+                $newAssigneeIds = $validated['assignee_ids'] ?? [];
+                $changes = [];
+
+                foreach ($validated as $key => $value) {
+                    if (in_array($key, ['assignee_ids', 'parent_task_id'], true)) {
+                        continue;
+                    }
+
+                    if ($lockedTask->{$key} != $value) {
+                        $changes[$key] = ['old' => $lockedTask->{$key}, 'new' => $value];
+                    }
+                }
+
+                $lockedTask->update(array_merge(
                     collect($validated)
-                        ->except(['assignee_ids', 'parent_task_id', 'predecessor_id', 'dependency_type'])
+                        ->except(['assignee_ids', 'parent_task_id', 'status', 'predecessor_id', 'dependency_type'])
                         ->toArray(),
                     [
                         'predecessor_id' => $validated['predecessor_id'] ?? null,
                         'dependency_type' => $validated['dependency_type'] ?? 'FS',
                     ],
-                ),
-            );
+                ));
 
-            $newAssigneeIds = $validated['assignee_ids'] ?? [];
-            $task->assignees()->sync($newAssigneeIds);
+                $lockedTask->assignees()->sync($newAssigneeIds);
+                foreach (array_diff($newAssigneeIds, $oldAssigneeIds) as $assigneeId) {
+                    if ($assigneeId != Auth::id()) {
+                        $message = 'Anda ditugaskan ke task: "'.$lockedTask->name.'" di project '.$lockedTask->project->name;
+                        Notification::create([
+                            'user_id' => $assigneeId,
+                            'type' => 'assignment',
+                            'title' => 'Task Ditugaskan ke Anda',
+                            'message' => $message,
+                            'task_id' => $lockedTask->id,
+                            'project_id' => $lockedTask->project_id,
+                        ]);
 
-            $addedAssignees = array_diff($newAssigneeIds, $oldAssigneeIds);
-            foreach ($addedAssignees as $assigneeId) {
-                if ($assigneeId != Auth::id()) {
-                    Notification::create([
-                        'user_id' => $assigneeId,
-                        'type' => 'assignment',
-                        'title' => 'Task Ditugaskan ke Anda',
-                        'message' => 'Anda ditugaskan ke task: "' . $task->name . '" di project ' . $task->project->name,
-                        'task_id' => $task->id,
-                        'project_id' => $task->project_id,
-                    ]);
-
-                    // Kirim email via Job
-                    $recipient = User::find($assigneeId);
-                    if ($recipient) {
-                        SendEmailNotification::dispatch($recipient, 'Task Ditugaskan ke Anda', 'Anda ditugaskan ke task: "' . $task->name . '" di project ' . $task->project->name, route('tasks.show', $task->token));
+                        $recipient = User::find($assigneeId);
+                        if ($recipient) {
+                            $this->queueEmailAfterCommit($recipient, 'Task Ditugaskan ke Anda', $message, $lockedTask);
+                        }
                     }
                 }
-            }
 
-            if ($oldStatus != $validated['status']) {
-                TaskStatusHistory::create([
-                    'task_id' => $task->id,
-                    'from_status' => $oldStatus,
-                    'to_status' => $validated['status'],
-                    'changed_by' => Auth::id(),
-                ]);
+                $statusChanged = false;
+                if ($oldStatus !== $validated['status']) {
+                    $statusChanged = $this->taskHierarchyService->changeStatus($lockedTask, $validated['status'], Auth::id());
+                    $this->createManualStatusNotifications($lockedTask, $oldStatus, $validated['status']);
+                } elseif ($lockedTask->parent_task_id !== null && array_key_exists('subtask_weight_percentage', $changes)) {
+                    $this->taskHierarchyService->synchronizeAncestors($lockedTask, Auth::id());
+                }
 
-                if ($validated['status'] === 'stopped') {
-                    $previousWeight = \App\Models\TaskStatusWeight::where('status', $oldStatus)->first();
-                    $currentProgress = $previousWeight ? $previousWeight->weight_value * 100 : 0;
-
-                    $task->update([
-                        'stopped_progress' => $currentProgress,
-                        'completed_at' => null,
-                    ]);
-                } elseif ($validated['status'] === 'completed') {
-                    $task->update([
-                        'stopped_progress' => null,
-                        'completed_at' => now(),
-                    ]);
-                } else {
-                    $task->update([
-                        'stopped_progress' => null,
-                        'completed_at' => null,
+                if (! empty($changes)) {
+                    ActivityLog::create([
+                        'user_id' => Auth::id(),
+                        'action' => 'updated',
+                        'entity_type' => 'task',
+                        'entity_id' => $lockedTask->id,
+                        'description' => 'Updated task: '.$lockedTask->name,
+                        'old_value' => $changes,
+                        'new_value' => $changes,
                     ]);
                 }
 
-                $notifMessage = 'Status task "' . $task->name . '" diubah dari ' . ucfirst(str_replace('_', ' ', $oldStatus)) . ' menjadi ' . ucfirst(str_replace('_', ' ', $validated['status']));
-
-                $recipients = collect($newAssigneeIds)->push($task->created_by)->filter()->unique()->reject(fn($id) => $id == Auth::id());
-
-                foreach ($recipients as $recipientId) {
-                    Notification::create([
-                        'user_id' => $recipientId,
-                        'type' => 'status_change',
-                        'title' => 'Status Task Berubah',
-                        'message' => $notifMessage,
-                        'task_id' => $task->id,
-                        'project_id' => $task->project_id,
+                if ($statusChanged) {
+                    ActivityLog::create([
+                        'user_id' => Auth::id(),
+                        'action' => 'status_changed',
+                        'entity_type' => 'task',
+                        'entity_id' => $lockedTask->id,
+                        'description' => 'Mengubah status task "'.$lockedTask->name.'" dari '.$oldStatus.' menjadi '.$validated['status'],
+                        'old_value' => ['status' => $oldStatus],
+                        'new_value' => ['status' => $validated['status']],
                     ]);
-
-                    // Kirim email via Job
-                    $recipient = User::find($recipientId);
-                    if ($recipient) {
-                        SendEmailNotification::dispatch($recipient, 'Status Task Berubah', $notifMessage, route('tasks.show', $task->token));
-                    }
                 }
-            }
 
-            if (!empty($changes)) {
-                ActivityLog::create([
-                    'user_id' => Auth::id(),
-                    'action' => 'updated',
-                    'entity_type' => 'task',
-                    'entity_id' => $task->id,
-                    'description' => 'Updated task: ' . $task->name,
-                    'old_value' => json_encode($changes),
-                    'new_value' => json_encode($changes),
-                ]);
-            }
-
-            app(ProjectProgressService::class)->syncPlannedProgress($task->project);
-            app(ProjectProgressService::class)->recordActualProgress($task->project);
-
-            DB::commit();
+                $this->projectProgressService->syncPlannedProgress($lockedTask->project);
+                $this->projectProgressService->recordActualProgress($lockedTask->project);
+            });
 
             $backUrl = session('task_back_url', route('projects.show', $task->project->token));
+
             return redirect($backUrl)->with('success', 'Task updated successfully!');
-        } catch (\Exception $e) {
-            DB::rollBack();
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (Throwable $e) {
             return back()
-                ->withErrors(['error' => 'Failed to update task: ' . $e->getMessage()])
+                ->withErrors(['error' => 'Failed to update task: '.$e->getMessage()])
                 ->withInput();
         }
     }
@@ -428,34 +612,40 @@ class TaskController extends Controller
     {
         $task = $this->findByToken($token);
 
-        if (!$task->project->isManager(Auth::user())) {
+        if (! $task->project->isManager(Auth::user())) {
             abort(403);
         }
 
-        DB::beginTransaction();
         try {
-            ActivityLog::create([
-                'user_id' => Auth::id(),
-                'action' => 'deleted',
-                'entity_type' => 'task',
-                'entity_id' => $task->id,
-                'description' => 'Deleted task: ' . $task->name,
-            ]);
-
             $project = $task->project;
             $projectToken = $project->token;
-            $task->delete();
 
-            app(ProjectProgressService::class)->syncPlannedProgress($project);
-            app(ProjectProgressService::class)->recordActualProgress($project);
+            DB::transaction(function () use ($task, $project): void {
+                $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+                $wasChild = $lockedTask->parent_task_id !== null;
 
-            DB::commit();
+                ActivityLog::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'deleted',
+                    'entity_type' => 'task',
+                    'entity_id' => $lockedTask->id,
+                    'description' => 'Deleted task: '.$lockedTask->name,
+                ]);
+
+                $lockedTask->delete();
+
+                if ($wasChild) {
+                    $this->taskHierarchyService->synchronizeAncestors($lockedTask, Auth::id());
+                }
+
+                $this->projectProgressService->syncPlannedProgress($project);
+                $this->projectProgressService->recordActualProgress($project);
+            });
 
             $backUrl = $request->input('back_url') ?? (session('task_back_url') ?? route('projects.show', $projectToken));
 
             return redirect($backUrl)->with('success', 'Task deleted successfully!');
-        } catch (\Exception $e) {
-            DB::rollBack();
+        } catch (Throwable $e) {
             return back()->withErrors(['error' => 'Failed to delete task.']);
         }
     }
@@ -465,103 +655,144 @@ class TaskController extends Controller
         $task = $this->findByToken($token);
 
         $isSuperAdmin = Auth::user()->isSuperAdmin();
-        if (!$isSuperAdmin && !$task->project->isMember(Auth::user())) {
+        if (! $isSuperAdmin && ! $task->project->canContribute(Auth::user())) {
             abort(403);
         }
 
-        $request->validate([
+        $validated = $request->validate([
             'status' => 'required|in:to_do,in_progress,review,completed,stopped,cancelled',
         ]);
 
-        DB::beginTransaction();
         try {
-            $oldStatus = $task->status;
+            DB::transaction(function () use ($task, $validated): void {
+                $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+                $oldStatus = $lockedTask->status;
+                $statusChanged = $this->taskHierarchyService->changeStatus($lockedTask, $validated['status'], Auth::id());
 
-            if ($request->status === 'stopped') {
-                $previousWeight = \App\Models\TaskStatusWeight::where('status', $oldStatus)->first();
-                $currentProgress = $previousWeight ? $previousWeight->weight_value * 100 : 0;
+                if ($statusChanged) {
+                    $this->createManualStatusNotifications($lockedTask, $oldStatus, $validated['status']);
+                    ActivityLog::create([
+                        'user_id' => Auth::id(),
+                        'action' => 'status_changed',
+                        'entity_type' => 'task',
+                        'entity_id' => $lockedTask->id,
+                        'description' => 'Mengubah status task "'.$lockedTask->name.'" dari '.$oldStatus.' menjadi '.$validated['status'],
+                        'old_value' => ['status' => $oldStatus],
+                        'new_value' => ['status' => $validated['status']],
+                    ]);
 
-                $task->update([
-                    'status' => $request->status,
-                    'stopped_progress' => $currentProgress,
-                    'completed_at' => null,
-                ]);
-            } elseif ($request->status === 'completed') {
-                $task->update([
-                    'status' => $request->status,
-                    'stopped_progress' => null,
-                    'completed_at' => now(),
-                ]);
-            } else {
-                $task->update([
-                    'status' => $request->status,
-                    'stopped_progress' => null,
-                    'completed_at' => null,
-                ]);
-            }
-
-            TaskStatusHistory::create([
-                'task_id' => $task->id,
-                'from_status' => $oldStatus,
-                'to_status' => $request->status,
-                'changed_by' => Auth::id(),
-            ]);
-
-            $notifMessage = 'Status task "' . $task->name . '" diubah dari ' . ucfirst(str_replace('_', ' ', $oldStatus)) . ' menjadi ' . ucfirst(str_replace('_', ' ', $request->status));
-
-            $task->load('assignees');
-
-            $recipients = collect($task->assignees->pluck('id')->toArray())
-                ->push($task->created_by)
-                ->filter()
-                ->unique()
-                ->reject(fn($id) => $id == Auth::id());
-
-            foreach ($recipients as $recipientId) {
-                Notification::create([
-                    'user_id' => $recipientId,
-                    'type' => 'status_change',
-                    'title' => 'Status Task Berubah',
-                    'message' => $notifMessage,
-                    'task_id' => $task->id,
-                    'project_id' => $task->project_id,
-                ]);
-
-                // Kirim email via Job
-                $recipient = User::find($recipientId);
-                if ($recipient) {
-                    SendEmailNotification::dispatch($recipient, 'Status Task Berubah', $notifMessage, route('tasks.show', $task->token));
+                    if ($validated['status'] !== 'completed' && $lockedTask->priority === 'urgent') {
+                        $lockedTask->load('assignees');
+                        foreach ($lockedTask->assignees as $assignee) {
+                            $this->queueEmailAfterCommit($assignee, 'Urgent Task Alert', 'Task "'.$lockedTask->name.'" is marked as urgent and needs immediate attention!', $lockedTask);
+                        }
+                    }
                 }
-            }
 
-            app(ProjectProgressService::class)->syncPlannedProgress($task->project);
-            app(ProjectProgressService::class)->recordActualProgress($task->project);
-            ActivityLog::create([
-                'user_id' => Auth::id(),
-                'action' => 'status_changed',
-                'entity_type' => 'task',
-                'entity_id' => $task->id,
-                'description' => 'Mengubah status task "' . $task->name . '" dari ' . $oldStatus . ' menjadi ' . $request->status,
-                'old_value' => ['status' => $oldStatus],
-                'new_value' => ['status' => $request->status],
-            ]);
-            DB::commit();
+                $this->projectProgressService->syncPlannedProgress($lockedTask->project);
+                $this->projectProgressService->recordActualProgress($lockedTask->project);
 
-            // Kirim email jika task urgent
-            if ($request->status !== 'completed' && $task->priority === 'urgent') {
-                $task->load('assignees');
-                foreach ($task->assignees as $assignee) {
-                    SendEmailNotification::dispatch($assignee, 'Urgent Task Alert', 'Task "' . $task->name . '" is marked as urgent and needs immediate attention!', route('tasks.show', $task->token));
-                }
-            }
+            });
 
             if ($request->expectsJson()) {
-                return response()->json(['success' => true, 'status' => $task->status]);
+                return response()->json(['success' => true, 'status' => $task->fresh()->status]);
             }
+
             return back()->with('success', 'Status updated successfully!');
-        } catch (\Exception $e) {
-            DB::rollBack();
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (Throwable $e) {
             return back()->withErrors(['error' => 'Failed to update status.']);
+        }
+    }
+
+    private function appendHierarchyValidationErrors(\Illuminate\Validation\Validator $validator, callable $callback): void
+    {
+        try {
+            $callback();
+        } catch (ValidationException $exception) {
+            foreach ($exception->errors() as $field => $messages) {
+                foreach ($messages as $message) {
+                    $validator->errors()->add($field, $message);
+                }
+            }
+        }
+    }
+
+    private function createManualStatusNotifications(Task $task, string $oldStatus, string $newStatus): void
+    {
+        $task->load('assignees');
+        $recipientIds = collect($task->assignees->pluck('id')->all())
+            ->push($task->created_by)
+            ->filter()
+            ->unique()
+            ->reject(fn ($recipientId) => $recipientId == Auth::id());
+        $message = 'Status task "'.$task->name.'" diubah dari '.ucfirst(str_replace('_', ' ', $oldStatus)).' menjadi '.ucfirst(str_replace('_', ' ', $newStatus));
+
+        foreach ($recipientIds as $recipientId) {
+            Notification::create([
+                'user_id' => $recipientId,
+                'type' => 'status_change',
+                'title' => 'Status Task Berubah',
+                'message' => $message,
+                'task_id' => $task->id,
+                'project_id' => $task->project_id,
+            ]);
+
+            $recipient = User::find($recipientId);
+            if ($recipient) {
+                $this->queueEmailAfterCommit($recipient, 'Status Task Berubah', $message, $task);
+            }
+        }
+    }
+
+    private function queueEmailAfterCommit(User $recipient, string $title, string $message, Task $task): void
+    {
+        DB::afterCommit(function () use ($recipient, $title, $message, $task): void {
+            SendEmailNotification::dispatch($recipient, $title, $message, route('tasks.show', $task->token));
+        });
+    }
+
+    private function hierarchyAncestors(Task $task): \Illuminate\Support\Collection
+    {
+        $ancestors = collect();
+        $ancestor = $task->parent;
+        $visitedTaskIds = [];
+
+        while ($ancestor !== null && $ancestors->count() < TaskHierarchyService::MAXIMUM_DEPTH) {
+            if (isset($visitedTaskIds[$ancestor->id])) {
+                break;
+            }
+
+            $visitedTaskIds[$ancestor->id] = true;
+            $ancestors->prepend($ancestor);
+            $ancestor = $ancestor->relationLoaded('parent') ? $ancestor->parent : null;
+        }
+
+        return $ancestors;
+    }
+
+    /**
+     * @param  array<int, true>  $visitedTaskIds
+     */
+    private function decorateHierarchyTask(Task $task, int $depth, array &$visitedTaskIds): void
+    {
+        if (isset($visitedTaskIds[$task->id]) || $depth > TaskHierarchyService::MAXIMUM_DEPTH) {
+            return;
+        }
+
+        $visitedTaskIds[$task->id] = true;
+        $subtasks = $task->relationLoaded('subtasks') ? $task->subtasks : collect();
+
+        $task->setAttribute('hierarchy_depth', $depth);
+        $task->setAttribute('subtasks_count', $subtasks->count());
+        $task->setAttribute('completed_subtasks_count', $subtasks->where('status', 'completed')->count());
+        $task->setAttribute('subtask_weight_total', round((float) $subtasks->sum('subtask_weight_percentage'), 2));
+        $task->setAttribute('remaining_subtask_weight', max(0, round(100 - (float) $subtasks->sum('subtask_weight_percentage'), 2)));
+        $task->setAttribute('hierarchy_progress_percentage', round($this->taskHierarchyService->resolveProgressPercentage($task), 2));
+
+        foreach ($subtasks as $subtask) {
+            $this->decorateHierarchyTask($subtask, $depth + 1, $visitedTaskIds);
         }
     }
 

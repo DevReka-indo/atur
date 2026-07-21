@@ -218,6 +218,18 @@
                                                     title="{{ $task->name }}">
                                                     {{ $task->name }}
                                                 </span>
+                                                @if ($task->parent)
+                                                    <div class="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
+                                                        <span class="rounded-full bg-indigo-100 px-2 py-0.5 font-semibold text-indigo-700">
+                                                            Subtask
+                                                        </span>
+                                                        <a href="{{ route('tasks.show', $task->parent->token) }}"
+                                                            class="truncate text-gray-500 hover:text-indigo-700"
+                                                            title="Parent: {{ $task->parent->name }}">
+                                                            Parent: {{ $task->parent->name }}
+                                                        </a>
+                                                    </div>
+                                                @endif
                                                 @if ($task->description)
                                                     <span class="block text-xs text-gray-400 mt-0.5 truncate"
                                                         title="{{ $task->description }}">{{ $task->description }}</span>

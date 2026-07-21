@@ -44,6 +44,13 @@
                     <input type="hidden" name="back_url" value="{{ $back_url }}">
                     <input type="hidden" name="view" value="{{ request('view', 'kanban', 'gantt') }}">
 
+                    @include('tasks.partials._parent-context', [
+                        'parentTask' => $task->parent,
+                        'parentDepth' => max(0, $taskDepth - 1),
+                        'usedSubtaskWeight' => $totalSiblingWeight,
+                        'remainingSubtaskWeight' => max(0, 100 - $totalSiblingWeight),
+                    ])
+
                     {{-- GRID LAYOUT: 2 KOLOM --}}
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
@@ -136,26 +143,31 @@
                                 </div>
                             </div>
 
-                            {{-- Status --}}
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-800 mb-2">Status <span
-                                        class="text-red-500">*</span></label>
-                                <select name="status"
-                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all duration-200 bg-white @error('status') border-red-400 bg-red-50/50 @enderror"
-                                    required>
-                                    @foreach (['to_do', 'in_progress', 'review', 'completed', 'stopped', 'cancelled'] as $status)
-                                        <option value="{{ $status }}"
-                                            {{ (old('status') ?? $task->status) === $status ? 'selected' : '' }}>
-                                            {{ str($status)->replace('_', ' ')->title() }}
-                                        </option>
-                                    @endforeach
-                                </select>
-                                @error('status')
-                                    <div class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                                        {{ $message }}
-                                    </div>
-                                @enderror
-                            </div>
+                            @if ($taskHasSubtasks)
+                                @include('tasks.partials._status-readonly', ['task' => $task])
+                            @else
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-800 mb-2">Status <span
+                                            class="text-red-500">*</span></label>
+                                    <select name="status"
+                                        class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all duration-200 bg-white @error('status') border-red-400 bg-red-50/50 @enderror"
+                                        required>
+                                        @foreach (['to_do', 'in_progress', 'review', 'completed', 'stopped', 'cancelled'] as $status)
+                                            <option value="{{ $status }}"
+                                                class="{{ $task->parent_task_id !== null && $status !== 'to_do' ? 'js-subtask-status-option' : '' }}"
+                                                {{ $task->parent_task_id !== null && !$subtaskStatusReady && $status !== 'to_do' ? 'disabled' : '' }}
+                                                {{ (old('status') ?? $task->status) === $status ? 'selected' : '' }}>
+                                                {{ str($status)->replace('_', ' ')->title() }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                    @error('status')
+                                        <div class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                            {{ $message }}
+                                        </div>
+                                    @enderror
+                                </div>
+                            @endif
 
                         </div>
 
@@ -217,27 +229,16 @@
                                 @enderror
                             </div>
 
-                            {{-- Weight --}}
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-800 mb-2">
-                                    Weight <span class="text-red-500">*</span>
-                                </label>
-                                <input type="number" name="weight" step="0.01" min="0.01"
-                                    value="{{ old('weight', number_format($task->weight, 2, '.', '')) }}"
-                                    placeholder="Contoh: 1.50"
-                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all duration-200 @error('weight') border-red-400 bg-red-50/50 @enderror"
-                                    required>
-                                @error('weight')
-                                    <div
-                                        class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                                        {{ $message }}
-                                    </div>
-                                @enderror
-                                <p class="mt-1.5 text-xs text-gray-500">
-                                    Earned Value saat ini: <span
-                                        class="font-medium text-gray-700">{{ number_format($task->earned_value, 2) }}</span>
-                                </p>
-                            </div>
+                            @include('tasks.partials._weight-readiness', [
+                                'isSubtask' => $task->parent_task_id !== null,
+                                'siblingWeightBase' => $siblingWeightWithoutTask,
+                                'remainingSubtaskWeight' => $remainingSubtaskWeight,
+                                'subtaskWeightValue' => number_format((float) $task->subtask_weight_percentage, 2, '.', ''),
+                                'remainingAfterInput' => max(0, 100 - $siblingWeightWithoutTask - (float) old('subtask_weight_percentage', $task->subtask_weight_percentage)),
+                                'legacyWeight' => number_format((float) $task->weight, 2, '.', ''),
+                                'rootWeightValue' => old('weight', number_format((float) $task->weight, 2, '.', '')),
+                                'statusUnlocked' => $task->status !== 'to_do',
+                            ])
 
                             {{-- Dates --}}
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -439,4 +440,6 @@
         });
         </script>
         @endpush
+
+        @include('tasks.partials._scripts')
 @endsection
