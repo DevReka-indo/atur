@@ -137,6 +137,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/management-projects', [ProjectController::class, 'managementIndex'])
         ->middleware('permission:management-projects.view')
         ->name('managementprojects.index');
+    Route::delete('/management-projects/{token}', [ProjectController::class, 'managementDestroy'])
+        ->middleware('permission:management-projects.delete')
+        ->name('managementprojects.destroy');
     Route::get('/management-workspaces', [WorkspaceController::class, 'managementIndex'])
         ->middleware('permission:management-workspaces.view')
         ->name('managementworkspaces.index');

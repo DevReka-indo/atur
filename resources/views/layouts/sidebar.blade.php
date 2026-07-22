@@ -97,7 +97,7 @@
                 request()->routeIs('management-permissions.*');
         @endphp
 
-        @if (auth()->check() && (auth()->user()->isSuperAdmin() || auth()->user()->isPermissionSystemReady()))
+        @if (auth()->check() && auth()->user()->isPermissionSystemReady())
             @canany(['management-users.view', 'management-projects.view', 'management-workspaces.view', 'roles.view', 'permissions.view'])
             <p class="px-4 pt-4 pb-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                 Lainnya
@@ -158,8 +158,8 @@
                         </a>
                     @endcan
 
-                    @can('roles.view')
-                        <a href="{{ route('management-roles.index') }}"
+                    @canany(['roles.view', 'permissions.view'])
+                        <a href="{{ auth()->user()->can('roles.view') ? route('management-roles.index') : route('management-permissions.index') }}"
                         class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
                         style="{{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'background-color: #0096c7' : '' }}">
@@ -169,7 +169,7 @@
                         </span>
                         <span class="font-medium">Role &amp; Permissions</span>
                         </a>
-                    @endcan
+                    @endcanany
                 </div>
             </nav>
             @endcanany

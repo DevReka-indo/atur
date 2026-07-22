@@ -256,14 +256,23 @@
                                             class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors">
                                             <i class="fa-solid fa-eye"></i>
                                         </a>
-                                        <a href="{{ route('projects.edit', $project->token) }}" title="Edit"
-                                            class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors">
-                                            <i class="fa-solid fa-pen"></i>
-                                        </a>
-                                        <button onclick="deleteProject('{{ $project->token }}')" title="Delete"
-                                            class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-500 hover:bg-red-50 transition-colors cursor-pointer">
-                                            <i class="fa-regular fa-trash-can"></i>
-                                        </button>
+                                        @if ($editableProjectIds->contains($project->id))
+                                            <a href="{{ route('projects.edit', $project->token) }}" title="Edit"
+                                                class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors">
+                                                <i class="fa-solid fa-pen"></i>
+                                            </a>
+                                        @endif
+                                        @can('management-projects.delete')
+                                            <form method="POST" action="{{ route('managementprojects.destroy', $project->token) }}"
+                                                onsubmit="return confirm('Are you sure you want to delete this project?')">
+                                                @csrf
+                                                @method('DELETE')
+                                                <button type="submit" title="Delete"
+                                                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-500 hover:bg-red-50 transition-colors cursor-pointer">
+                                                    <i class="fa-regular fa-trash-can"></i>
+                                                </button>
+                                            </form>
+                                        @endcan
                                     </div>
                                 </td>
 
@@ -333,21 +342,6 @@
             }
         }
 
-        // Delete
-        function deleteProject(id) {
-            if (confirm('Are you sure you want to delete this project?')) {
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = `/projects/${id}?redirect=management`;
-                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-                form.innerHTML = `
-                    <input type="hidden" name="_token" value="${csrfToken}">
-                    <input type="hidden" name="_method" value="DELETE">
-                `;
-                document.body.appendChild(form);
-                form.submit();
-            }
-        }
     </script>
 
     <!-- POP UPNYA YA LEK KUU -->

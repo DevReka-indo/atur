@@ -12,6 +12,7 @@ use App\Models\Workspace;
 use App\Services\ProjectProgressService;
 use App\Services\TaskGanttService;
 use App\Services\TaskHierarchyService;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -665,13 +666,45 @@ class ProjectController extends Controller
         Gate::authorize('management-projects.view');
 
         $totalUsers = User::count();
+        $user = Auth::user();
 
-        $projects = Project::with(['workspace', 'members'])
+        $projects = Project::with(['workspace.members', 'members'])
             ->withCount('tasks')
             ->latest()
             ->get();
 
-        return view('managementprojects.index', compact('projects', 'totalUsers'));
+        $editableProjectIds = $projects
+            ->filter(function (Project $project) use ($user): bool {
+                if ($user->isSuperAdmin() || $project->workspace->isOwner($user)) {
+                    return true;
+                }
+
+                return $project->workspace->members
+                    ->firstWhere('id', $user->id)?->pivot?->role === Workspace::ROLE_ADMIN;
+            })
+            ->pluck('id');
+
+        return view('managementprojects.index', compact('projects', 'totalUsers', 'editableProjectIds'));
+    }
+
+    public function managementDestroy(string $token): RedirectResponse
+    {
+        Gate::authorize('management-projects.delete');
+
+        $project = $this->findByToken($token);
+
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'deleted',
+            'entity_type' => 'project',
+            'entity_id' => $project->id,
+            'description' => 'Menghapus project: '.$project->name,
+        ]);
+
+        $project->delete();
+
+        return redirect()->route('managementprojects.index')
+            ->with('success', 'Project deleted successfully!');
     }
 
     public function updateStatus(Request $request, string $token)

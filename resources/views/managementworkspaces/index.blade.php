@@ -264,10 +264,12 @@
                                             class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors">
                                             <i class="fa-regular fa-eye"></i>
                                         </a>
-                                        <button onclick="deleteWorkspace('{{ $workspace->token }}')" title="Delete"
-                                            class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-500 hover:bg-red-50 transition-colors cursor-pointer">
-                                            <i class="fa-regular fa-trash-can"></i>
-                                        </button>
+                                        @can('management-workspaces.delete')
+                                            <button onclick="deleteWorkspace('{{ $workspace->token }}')" title="Delete"
+                                                class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-500 hover:bg-red-50 transition-colors cursor-pointer">
+                                                <i class="fa-regular fa-trash-can"></i>
+                                            </button>
+                                        @endcan
                                     </div>
                                 </td>
 

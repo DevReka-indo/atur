@@ -210,6 +210,17 @@
                                                 </a>
                                             @endcan
 
+                                            @can('management-users.toggle-status')
+                                                <form method="POST" action="{{ route('management-users.toggle-status', $user) }}">
+                                                    @csrf
+                                                    @method('PATCH')
+                                                    <button type="submit" title="{{ $user->is_active ? 'Deactivate' : 'Activate' }}"
+                                                        class="inline-flex items-center justify-center w-8 h-8 rounded-lg {{ $user->is_active ? 'text-orange-500 hover:bg-orange-50' : 'text-emerald-500 hover:bg-emerald-50' }} transition-colors cursor-pointer">
+                                                        <i class="fa-solid fa-power-off"></i>
+                                                    </button>
+                                                </form>
+                                            @endcan
+
                                             @can('management-users.delete')
                                                 {{-- Delete --}}
                                                 <form method="POST" action="{{ route('management-users.destroy', $user) }}"
