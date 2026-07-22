@@ -93,13 +93,15 @@
                 request()->routeIs('users.*') ||
                 request()->routeIs('management-users.*') ||
                 request()->routeIs('managementworkspaces.*') ||
+                request()->routeIs('project-templates.*') ||
+                request()->routeIs('project-template-categories.*') ||
                 request()->routeIs('management-roles.*') ||
                 request()->routeIs('management-permissions.*');
         @endphp
 
         @if (auth()->check() && auth()->user()->isPermissionSystemReady())
             @canany(['management-users.view', 'management-projects.view', 'management-workspaces.view', 'roles.view',
-                'permissions.view'])
+                'permissions.view', 'project-template-categories.view', 'project-templates.view'])
                 <p class="px-4 pt-4 pb-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     Lainnya
                 </p>
@@ -158,6 +160,18 @@
                                 <span class="font-medium">Management Users</span>
                             </a>
                         @endcan
+
+                        @canany(['project-template-categories.view', 'project-templates.view'])
+                            <a href="{{ auth()->user()->can('project-templates.view') ? route('project-templates.index') : route('project-template-categories.index') }}"
+                                class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
+            {{ request()->routeIs('project-templates.*', 'project-template-categories.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
+                                style="{{ request()->routeIs('project-templates.*', 'project-template-categories.*') ? 'background-color: #0096c7' : '' }}">
+                                <span class="w-5 flex justify-center ml-6">
+                                    <span class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('project-templates.*', 'project-template-categories.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
+                                </span>
+                                <span class="font-medium">Project Templates</span>
+                            </a>
+                        @endcanany
 
                         @canany(['roles.view', 'permissions.view'])
                             <a href="{{ auth()->user()->can('roles.view') ? route('management-roles.index') : route('management-permissions.index') }}"

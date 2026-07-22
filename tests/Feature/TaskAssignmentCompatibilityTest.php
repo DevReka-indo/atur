@@ -73,7 +73,9 @@ class TaskAssignmentCompatibilityTest extends TestCase
         $this->createTask(['name' => 'Other user task', 'assignee_id' => $this->otherUser->id]);
         $this->createTask(['name' => 'Unassigned index task']);
 
-        $view = app(TaskController::class)->index(Request::create('/tasks', 'GET'));
+        $view = app()->call([app(TaskController::class), 'index'], [
+            'request' => Request::create('/tasks', 'GET'),
+        ]);
         $taskIds = $view->getData()['tasks']->pluck('id')->all();
 
         $this->assertEqualsCanonicalizing([$legacyTask->id, $pivotTask->id, $bothTask->id], $taskIds);

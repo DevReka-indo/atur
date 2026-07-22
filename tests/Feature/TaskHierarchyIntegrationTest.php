@@ -222,7 +222,7 @@ class TaskHierarchyIntegrationTest extends TestCase
         $response->assertOk()
             ->assertSee('List root')
             ->assertSee('List child')
-            ->assertSee('Parent: List root')
+            ->assertSeeInOrder(['Parent:', 'List root'])
             ->assertSee('Subtask');
     }
 

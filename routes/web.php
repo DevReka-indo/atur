@@ -10,6 +10,9 @@ use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\PermissionManagementController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\ProjectTemplateCategoryController;
+use App\Http\Controllers\ProjectTemplateController;
+use App\Http\Controllers\ProjectTemplateTaskController;
 use App\Http\Controllers\RolePermissionController;
 use App\Http\Controllers\TaskController;
 use App\Http\Controllers\UserController;
@@ -436,6 +439,102 @@ Route::middleware('auth')->group(function () {
     Route::post('/management-permissions', [PermissionManagementController::class, 'store'])
         ->middleware('permission:permissions.create')
         ->name('management-permissions.store');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Project Template Categories
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/project-template-categories', [ProjectTemplateCategoryController::class, 'index'])
+        ->middleware('permission:project-template-categories.view')
+        ->name('project-template-categories.index');
+
+    Route::get('/project-template-categories/create', [ProjectTemplateCategoryController::class, 'create'])
+        ->middleware('permission:project-template-categories.create')
+        ->name('project-template-categories.create');
+
+    Route::post('/project-template-categories', [ProjectTemplateCategoryController::class, 'store'])
+        ->middleware('permission:project-template-categories.create')
+        ->name('project-template-categories.store');
+
+    Route::get('/project-template-categories/{project_template_category:slug}/edit', [ProjectTemplateCategoryController::class, 'edit'])
+        ->middleware('permission:project-template-categories.update')
+        ->name('project-template-categories.edit');
+
+    Route::put('/project-template-categories/{project_template_category:slug}', [ProjectTemplateCategoryController::class, 'update'])
+        ->middleware('permission:project-template-categories.update')
+        ->name('project-template-categories.update');
+
+    Route::patch('/project-template-categories/{project_template_category:slug}/status', [ProjectTemplateCategoryController::class, 'toggleStatus'])
+        ->middleware('permission:project-template-categories.update')
+        ->name('project-template-categories.toggle-status');
+
+    Route::delete('/project-template-categories/{project_template_category:slug}', [ProjectTemplateCategoryController::class, 'destroy'])
+        ->middleware('permission:project-template-categories.delete')
+        ->name('project-template-categories.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Project Templates
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/project-templates', [ProjectTemplateController::class, 'index'])
+        ->middleware('permission:project-templates.view')
+        ->name('project-templates.index');
+
+    Route::get('/project-templates/create', [ProjectTemplateController::class, 'create'])
+        ->middleware('permission:project-templates.create')
+        ->name('project-templates.create');
+
+    Route::post('/project-templates', [ProjectTemplateController::class, 'store'])
+        ->middleware('permission:project-templates.create')
+        ->name('project-templates.store');
+
+    Route::get('/project-templates/{project_template:slug}', [ProjectTemplateController::class, 'show'])
+        ->middleware('permission:project-templates.view')
+        ->name('project-templates.show');
+
+    Route::get('/project-templates/{project_template:slug}/edit', [ProjectTemplateController::class, 'edit'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.edit');
+
+    Route::put('/project-templates/{project_template:slug}', [ProjectTemplateController::class, 'update'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.update');
+
+    Route::patch('/project-templates/{project_template:slug}/status', [ProjectTemplateController::class, 'toggleStatus'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.toggle-status');
+
+    Route::delete('/project-templates/{project_template:slug}', [ProjectTemplateController::class, 'destroy'])
+        ->middleware('permission:project-templates.delete')
+        ->name('project-templates.destroy');
+
+    Route::post('/project-templates/{project_template:slug}/tasks', [ProjectTemplateTaskController::class, 'store'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.tasks.store');
+
+    Route::patch('/project-templates/{project_template:slug}/tasks/reorder', [ProjectTemplateTaskController::class, 'reorder'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.tasks.reorder');
+
+    Route::put('/project-templates/{project_template:slug}/tasks/{template_task}', [ProjectTemplateTaskController::class, 'update'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.tasks.update');
+
+    Route::delete('/project-templates/{project_template:slug}/tasks/{template_task}', [ProjectTemplateTaskController::class, 'destroy'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.tasks.destroy');
+
+    Route::put('/project-templates/{project_template:slug}/tasks/{template_task}/dependency', [ProjectTemplateTaskController::class, 'updateDependency'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.tasks.dependency.update');
+
+    Route::delete('/project-templates/{project_template:slug}/tasks/{template_task}/dependency', [ProjectTemplateTaskController::class, 'destroyDependency'])
+        ->middleware('permission:project-templates.update')
+        ->name('project-templates.tasks.dependency.destroy');
 
     /*
     |--------------------------------------------------------------------------

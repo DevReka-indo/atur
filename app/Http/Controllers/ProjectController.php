@@ -6,10 +6,12 @@ use App\Jobs\SendEmailNotification;
 use App\Models\ActivityLog;
 use App\Models\Notification;
 use App\Models\Project;
+use App\Models\ProjectTemplate;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Services\ProjectProgressService;
+use App\Services\ProjectTemplateApplicationService;
 use App\Services\TaskGanttService;
 use App\Services\TaskHierarchyService;
 use Illuminate\Http\RedirectResponse;
@@ -18,10 +20,17 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class ProjectController extends Controller
 {
-    public function __construct(private TaskHierarchyService $taskHierarchyService, private TaskGanttService $taskGanttService) {}
+    public function __construct(
+        private TaskHierarchyService $taskHierarchyService,
+        private TaskGanttService $taskGanttService,
+        private ProjectTemplateApplicationService $projectTemplateApplicationService,
+    ) {}
 
     // Resolve project by token (helper internal)
     private function findByToken(string $token): Project
@@ -52,8 +61,35 @@ class ProjectController extends Controller
     public function create()
     {
         $workspaces = Auth::user()->workspaces;
+        $projectTemplates = ProjectTemplate::query()
+            ->where('is_active', true)
+            ->whereHas('category', fn ($query) => $query->where('is_active', true))
+            ->with([
+                'category:id,name',
+                'tasks:id,project_template_id,parent_id,name,weight,start_offset_days,duration_days',
+            ])
+            ->orderBy('name')
+            ->get()
+            ->map(function (ProjectTemplate $template): array {
+                $parentIds = $template->tasks->pluck('parent_id')->filter()->map(fn ($id): int => (int) $id)->unique();
+                $leafTasks = $template->tasks->reject(fn ($task): bool => $parentIds->contains($task->id));
+                $estimatedEndOffset = $leafTasks->max(
+                    fn ($task): int => $task->start_offset_days + $task->duration_days - 1
+                ) ?? 0;
 
-        return view('projects.create', compact('workspaces'));
+                return [
+                    'id' => $template->id,
+                    'name' => $template->name,
+                    'category' => $template->category->name,
+                    'description' => Str::limit($template->description, 140),
+                    'version' => $template->version,
+                    'tasks_count' => $template->tasks->count(),
+                    'leaf_weight' => round((float) $leafTasks->sum('weight'), 2),
+                    'estimated_end_offset' => $estimatedEndOffset,
+                ];
+            });
+
+        return view('projects.create', compact('workspaces', 'projectTemplates'));
     }
 
     public function store(Request $request, ProjectProgressService $projectProgressService)
@@ -65,6 +101,7 @@ class ProjectController extends Controller
             'start_date' => 'required|date',
             'due_date' => 'required|date|after_or_equal:start_date',
             'status' => 'required|in:planning,active,on_hold,completed,cancelled,urgent',
+            'project_template_id' => ['nullable', Rule::exists((new ProjectTemplate)->getTable(), 'id')],
         ]);
 
         $workspace = Workspace::findOrFail($validated['workspace_id']);
@@ -72,11 +109,29 @@ class ProjectController extends Controller
             abort(403, 'Only workspace owner/admin can create projects.');
         }
 
-        $project = DB::transaction(function () use ($projectProgressService, $validated, $workspace): Project {
+        $actor = Auth::user();
+        $project = DB::transaction(function () use ($actor, $projectProgressService, $validated, $workspace): Project {
+            $template = null;
+            if (! empty($validated['project_template_id'])) {
+                $template = ProjectTemplate::query()
+                    ->with('category')
+                    ->lockForUpdate()
+                    ->findOrFail($validated['project_template_id']);
+
+                if (! $template->isEffectivelyActive()) {
+                    throw ValidationException::withMessages([
+                        'project_template_id' => 'Template yang dipilih sudah tidak aktif.',
+                    ]);
+                }
+            }
+
             $project = Project::create([
                 'workspace_id' => $validated['workspace_id'],
+                'project_template_id' => $template?->id,
+                'source_template_name' => $template?->name,
+                'source_template_version' => $template?->version,
                 'name' => $validated['name'],
-                'description' => $validated['description'],
+                'description' => $validated['description'] ?? null,
                 'start_date' => $validated['start_date'],
                 'end_date' => $validated['due_date'],
                 'status' => $validated['status'],
@@ -153,18 +208,26 @@ class ProjectController extends Controller
                 ],
             ];
 
-            foreach ($defaultTasks as $taskData) {
-                $project->tasks()->create([
-                    'name' => $taskData['name'],
-                    'description' => $taskData['description'],
-                    'status' => $taskData['status'],
-                    'priority' => $taskData['priority'],
-                    'weight' => $taskData['weight'],
-                    'start_date' => $taskData['start_date'],
-                    'due_date' => $taskData['due_date'],
-                    'created_by' => Auth::id(),
-                    'project_id' => $project->id,
-                ]);
+            if ($template === null) {
+                foreach ($defaultTasks as $taskData) {
+                    $project->tasks()->create([
+                        'name' => $taskData['name'],
+                        'description' => $taskData['description'],
+                        'status' => $taskData['status'],
+                        'priority' => $taskData['priority'],
+                        'weight' => $taskData['weight'],
+                        'start_date' => $taskData['start_date'],
+                        'due_date' => $taskData['due_date'],
+                        'created_by' => Auth::id(),
+                        'project_id' => $project->id,
+                    ]);
+                }
+            } else {
+                $applicationResult = $this->projectTemplateApplicationService->apply($project, $template, $actor);
+                $latestTaskDueDate = $applicationResult['due_date'];
+                if ($latestTaskDueDate !== null && $latestTaskDueDate->greaterThan($project->end_date)) {
+                    $project->update(['end_date' => $latestTaskDueDate->toDateString()]);
+                }
             }
 
             $projectProgressService->syncPlannedProgress($project);
@@ -316,7 +379,15 @@ class ProjectController extends Controller
 
     private function buildProjectTaskHierarchy(Project $project): Collection
     {
-        $tasksByParent = $project->tasks->groupBy(fn (Task $task): int => (int) ($task->parent_task_id ?? 0));
+        $tasksByParent = $project->tasks
+            ->groupBy(fn (Task $task): int => (int) ($task->parent_task_id ?? 0))
+            ->map(fn (Collection $tasks): Collection => $tasks
+                ->sortBy([
+                    ['position', 'asc'],
+                    ['created_at', 'asc'],
+                    ['id', 'asc'],
+                ])
+                ->values());
 
         $taskHierarchyRoots = $tasksByParent->get(0, collect())->values();
 

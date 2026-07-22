@@ -196,6 +196,9 @@ class ProjectCreationProgressTest extends TestCase
         Schema::create('projects', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('workspace_id');
+            $table->foreignId('project_template_id')->nullable();
+            $table->string('source_template_name')->nullable();
+            $table->unsignedInteger('source_template_version')->nullable();
             $table->string('name');
             $table->text('description')->nullable();
             $table->date('start_date')->nullable();

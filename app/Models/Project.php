@@ -1,14 +1,13 @@
 <?php
+
 // app/Models/Project.php
 
 namespace App\Models;
 
-use Illuminate\Support\Str;
+use App\Services\TaskHierarchyService;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Models\Notification;
-use App\Models\ProjectThread;
-use App\Services\TaskHierarchyService;
+use Illuminate\Support\Str;
 
 class Project extends Model
 {
@@ -16,6 +15,9 @@ class Project extends Model
 
     protected $fillable = [
         'workspace_id',
+        'project_template_id',
+        'source_template_name',
+        'source_template_version',
         'name',
         'description',
         'start_date',
@@ -28,11 +30,17 @@ class Project extends Model
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',
+        'source_template_version' => 'integer',
     ];
 
     public function workspace()
     {
         return $this->belongsTo(Workspace::class);
+    }
+
+    public function sourceTemplate()
+    {
+        return $this->belongsTo(ProjectTemplate::class, 'project_template_id')->withTrashed();
     }
 
     /**
@@ -71,7 +79,6 @@ class Project extends Model
             ->orderBy('created_at', 'desc');
     }
 
-
     /**
      * Tasks utama (tanpa parent)
      */
@@ -82,7 +89,6 @@ class Project extends Model
             ->orderByRaw("FIELD(priority, 'urgent', 'high', 'medium', 'low')")
             ->orderBy('created_at', 'desc');
     }
-
 
     /**
      * Baselines dari project ini
@@ -113,7 +119,10 @@ class Project extends Model
      */
     public function isManager(User $user)
     {
-        if ($user->isSuperAdmin()) return true;
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
         return $this->members()
             ->wherePivot('user_id', $user->id)
             ->wherePivot('role', 'manager')
@@ -125,7 +134,10 @@ class Project extends Model
      */
     public function isMember(User $user)
     {
-        if ($user->isSuperAdmin()) return true;
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
         return $this->members()
             ->wherePivot('user_id', $user->id)
             ->exists();
@@ -142,10 +154,12 @@ class Project extends Model
 
     public function canContribute(User $user): bool
     {
-        if ($user->isSuperAdmin()) return true;
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
         return in_array($this->roleForUser($user), ['manager', 'member'], true);
     }
-
 
     public function canCreateThread(User $user): bool
     {
