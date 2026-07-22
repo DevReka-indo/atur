@@ -2,20 +2,21 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SendEmailNotification;
+use App\Models\ActivityLog;
+use App\Models\Notification;
 use App\Models\Project;
 use App\Models\Task;
-use App\Models\Workspace;
-use App\Models\Notification;
-use App\Services\TaskHierarchyService;
-use App\Services\TaskGanttService;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use App\Services\ProjectProgressService;
 use App\Models\User;
-use App\Models\ActivityLog;
-use App\Jobs\SendEmailNotification;
-use Illuminate\Support\Facades\DB;
+use App\Models\Workspace;
+use App\Services\ProjectProgressService;
+use App\Services\TaskGanttService;
+use App\Services\TaskHierarchyService;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class ProjectController extends Controller
 {
@@ -66,7 +67,7 @@ class ProjectController extends Controller
         ]);
 
         $workspace = Workspace::findOrFail($validated['workspace_id']);
-        if (!Auth::user()->isSuperAdmin() && !$workspace->canCreateProject(Auth::user())) {
+        if (! Auth::user()->isSuperAdmin() && ! $workspace->canCreateProject(Auth::user())) {
             abort(403, 'Only workspace owner/admin can create projects.');
         }
 
@@ -173,7 +174,7 @@ class ProjectController extends Controller
                 'action' => 'created',
                 'entity_type' => 'project',
                 'entity_id' => $project->id,
-                'description' => 'Membuat project: ' . $project->name,
+                'description' => 'Membuat project: '.$project->name,
             ]);
 
             return $project;
@@ -187,18 +188,18 @@ class ProjectController extends Controller
         $project = $this->findByToken($token);
         $user = Auth::user();
 
-        if (!$project->isMember($user)) {
+        if (! $project->isMember($user)) {
             return redirect()->back()->with('access_denied', 'Kamu tidak memiliki akses ke project ini. Hubungi manager project untuk ditambahkan sebagai member.');
         }
 
         $currentView = request()->string('view', 'list')->toString();
         $currentTab = request()->string('tab', 'tasks')->toString();
 
-        if (!in_array($currentView, ['list', 'gantt', 'kanban'], true)) {
+        if (! in_array($currentView, ['list', 'gantt', 'kanban'], true)) {
             $currentView = 'list';
         }
 
-        if (!in_array($currentTab, ['tasks', 'members', 'chart'], true)) {
+        if (! in_array($currentTab, ['tasks', 'members', 'chart'], true)) {
             $currentTab = 'tasks';
         }
 
@@ -314,7 +315,7 @@ class ProjectController extends Controller
 
     private function buildProjectTaskHierarchy(Project $project): Collection
     {
-        $tasksByParent = $project->tasks->groupBy(fn(Task $task): int => (int) ($task->parent_task_id ?? 0));
+        $tasksByParent = $project->tasks->groupBy(fn (Task $task): int => (int) ($task->parent_task_id ?? 0));
 
         $taskHierarchyRoots = $tasksByParent->get(0, collect())->values();
 
@@ -333,7 +334,7 @@ class ProjectController extends Controller
 
         $plannedProgress = $baseline ? $baseline->plannedProgress->sortBy('date')->values() : collect();
 
-        $actualProgress = $project->actualProgress->when($baseline, fn(Collection $collection): Collection => $collection->where('baseline_id', $baseline->id))->sortBy('date')->values();
+        $actualProgress = $project->actualProgress->when($baseline, fn (Collection $collection): Collection => $collection->where('baseline_id', $baseline->id))->sortBy('date')->values();
 
         $chartData = [
             'labels' => [],
@@ -351,45 +352,45 @@ class ProjectController extends Controller
         }
 
         $dateLabels = collect()
-            ->merge($plannedProgress->pluck('date')->map(fn($date): string => $date->format('Y-m-d')))
-            ->merge($actualProgress->pluck('date')->map(fn($date): string => $date->format('Y-m-d')))
+            ->merge($plannedProgress->pluck('date')->map(fn ($date): string => $date->format('Y-m-d')))
+            ->merge($actualProgress->pluck('date')->map(fn ($date): string => $date->format('Y-m-d')))
             ->unique()
             ->sort()
             ->values();
 
         $plannedMap = $plannedProgress->mapWithKeys(
-            fn($item): array => [
+            fn ($item): array => [
                 $item->date->format('Y-m-d') => (float) $item->planned_cumulative_percentage,
             ],
         );
 
         $actualMap = $actualProgress->mapWithKeys(
-            fn($item): array => [
+            fn ($item): array => [
                 $item->date->format('Y-m-d') => (float) $item->actual_cumulative_percentage,
             ],
         );
 
         $completedMap = $actualProgress->mapWithKeys(
-            fn($item): array => [
+            fn ($item): array => [
                 $item->date->format('Y-m-d') => (int) $item->completed_tasks_count,
             ],
         );
 
         $totalMap = $actualProgress->mapWithKeys(
-            fn($item): array => [
+            fn ($item): array => [
                 $item->date->format('Y-m-d') => (int) $item->total_tasks_count,
             ],
         );
 
-        $chartData['labels'] = $dateLabels->map(fn(string $date): string => \Carbon\Carbon::parse($date)->format('d M Y'))->all();
+        $chartData['labels'] = $dateLabels->map(fn (string $date): string => \Carbon\Carbon::parse($date)->format('d M Y'))->all();
 
-        $chartData['planned'] = $dateLabels->map(fn(string $date): ?float => $plannedMap->get($date))->all();
+        $chartData['planned'] = $dateLabels->map(fn (string $date): ?float => $plannedMap->get($date))->all();
 
-        $chartData['actual'] = $dateLabels->map(fn(string $date): ?float => $actualMap->get($date))->all();
+        $chartData['actual'] = $dateLabels->map(fn (string $date): ?float => $actualMap->get($date))->all();
 
-        $chartData['completed_tasks'] = $dateLabels->map(fn(string $date): ?int => $completedMap->get($date))->all();
+        $chartData['completed_tasks'] = $dateLabels->map(fn (string $date): ?int => $completedMap->get($date))->all();
 
-        $chartData['total_tasks'] = $dateLabels->map(fn(string $date): ?int => $totalMap->get($date))->all();
+        $chartData['total_tasks'] = $dateLabels->map(fn (string $date): ?int => $totalMap->get($date))->all();
 
         return [
             'baseline' => $baseline,
@@ -402,7 +403,7 @@ class ProjectController extends Controller
         $currentUserId = Auth::id();
 
         $memberTaskCounts = $project->members->mapWithKeys(
-            fn(User $member): array => [
+            fn (User $member): array => [
                 $member->id => 0,
             ],
         );
@@ -424,7 +425,7 @@ class ProjectController extends Controller
             $assignedUserIds = $task->assignees->isNotEmpty() ? $task->assignees->pluck('id') : collect([$task->assignee_id])->filter();
 
             foreach ($assignedUserIds->unique() as $assignedUserId) {
-                if (!$memberTaskCounts->has($assignedUserId)) {
+                if (! $memberTaskCounts->has($assignedUserId)) {
                     continue;
                 }
 
@@ -432,13 +433,13 @@ class ProjectController extends Controller
             }
         }
 
-        $overloadedMemberIds = $memberTaskCounts->filter(fn(int $count): bool => $count >= 5)->keys()->map(fn($id): int => (int) $id)->all();
+        $overloadedMemberIds = $memberTaskCounts->filter(fn (int $count): bool => $count >= 5)->keys()->map(fn ($id): int => (int) $id)->all();
 
-        $managers = $project->members->filter(fn(User $member): bool => $member->pivot->role === 'manager')->sortByDesc(fn(User $member): bool => $member->id === $currentUserId)->values();
+        $managers = $project->members->filter(fn (User $member): bool => $member->pivot->role === 'manager')->sortByDesc(fn (User $member): bool => $member->id === $currentUserId)->values();
 
-        $members = $project->members->filter(fn(User $member): bool => $member->pivot->role === 'member')->sortByDesc(fn(User $member): bool => $member->id === $currentUserId)->values();
+        $members = $project->members->filter(fn (User $member): bool => $member->pivot->role === 'member')->sortByDesc(fn (User $member): bool => $member->id === $currentUserId)->values();
 
-        $viewers = $project->members->filter(fn(User $member): bool => $member->pivot->role === 'viewer')->sortByDesc(fn(User $member): bool => $member->id === $currentUserId)->values();
+        $viewers = $project->members->filter(fn (User $member): bool => $member->pivot->role === 'viewer')->sortByDesc(fn (User $member): bool => $member->id === $currentUserId)->values();
 
         return [
             'memberTaskCounts' => $memberTaskCounts,
@@ -454,7 +455,7 @@ class ProjectController extends Controller
     {
         $project = $this->findByToken($token);
 
-        if (!Auth::user()->isSuperAdmin() && !$project->workspace->canCreateProject(Auth::user())) {
+        if (! Auth::user()->isSuperAdmin() && ! $project->workspace->canCreateProject(Auth::user())) {
             abort(403, 'Only workspace owner/admin can edit this project.');
         }
 
@@ -469,7 +470,7 @@ class ProjectController extends Controller
     {
         $project = $this->findByToken($token);
 
-        if (!$project->workspace->canCreateProject(Auth::user())) {
+        if (! $project->workspace->canCreateProject(Auth::user())) {
             abort(403, 'Only workspace owner/admin can update this project.');
         }
 
@@ -488,19 +489,21 @@ class ProjectController extends Controller
             'action' => 'updated',
             'entity_type' => 'project',
             'entity_id' => $project->id,
-            'description' => 'Mengubah project: ' . $project->name,
+            'description' => 'Mengubah project: '.$project->name,
         ]);
         app(ProjectProgressService::class)->syncPlannedProgress($project);
         app(ProjectProgressService::class)->recordActualProgress($project);
 
         $backUrl = session('project_back_url', route('workspaces.show', $project->workspace->token));
+
         return redirect($backUrl)->with('success', 'Project updated successfully!');
     }
+
     public function destroy(Request $request, string $token)
     {
         $project = $this->findByToken($token);
 
-        if (!Auth::user()->isSuperAdmin() && !$project->workspace->canManageSettings(Auth::user())) {
+        if (! Auth::user()->isSuperAdmin() && ! $project->workspace->canManageSettings(Auth::user())) {
             abort(403, 'Only workspace owner can delete this project.');
         }
 
@@ -511,7 +514,7 @@ class ProjectController extends Controller
             'action' => 'deleted',
             'entity_type' => 'project',
             'entity_id' => $project->id,
-            'description' => 'Menghapus project: ' . $project->name,
+            'description' => 'Menghapus project: '.$project->name,
         ]);
 
         $project->delete();
@@ -529,7 +532,7 @@ class ProjectController extends Controller
     {
         $project = $this->findByToken($token);
 
-        if (!$project->isManager(Auth::user())) {
+        if (! $project->isManager(Auth::user())) {
             abort(403, 'Only project manager can manage project members.');
         }
 
@@ -541,7 +544,7 @@ class ProjectController extends Controller
 
         $added = 0;
         foreach ($validated['user_ids'] as $userId) {
-            if (!$project->workspace->members()->where('user_id', $userId)->exists()) {
+            if (! $project->workspace->members()->where('user_id', $userId)->exists()) {
                 continue;
             }
             if ($project->members()->where('user_id', $userId)->exists()) {
@@ -558,7 +561,7 @@ class ProjectController extends Controller
                     'user_id' => $userId,
                     'type' => 'project_added',
                     'title' => 'Ditambahkan ke Project',
-                    'message' => 'Anda ditambahkan ke project "' . $project->name . '" sebagai ' . ucfirst($validated['role']),
+                    'message' => 'Anda ditambahkan ke project "'.$project->name.'" sebagai '.ucfirst($validated['role']),
                     'project_id' => $project->id,
                     'task_id' => null,
                 ]);
@@ -566,7 +569,7 @@ class ProjectController extends Controller
                 // Kirim email via Job
                 $recipient = User::find($userId);
                 if ($recipient) {
-                    SendEmailNotification::dispatch($recipient, 'Ditambahkan ke Project', 'Anda ditambahkan ke project "' . $project->name . '" sebagai ' . ucfirst($validated['role']), route('projects.show', $project->token));
+                    SendEmailNotification::dispatch($recipient, 'Ditambahkan ke Project', 'Anda ditambahkan ke project "'.$project->name.'" sebagai '.ucfirst($validated['role']), route('projects.show', $project->token));
                 }
             }
             $added++;
@@ -576,11 +579,12 @@ class ProjectController extends Controller
                 'action' => 'assigned',
                 'entity_type' => 'project',
                 'entity_id' => $project->id,
-                'description' => 'Menambahkan anggota ke project: ' . $project->name,
+                'description' => 'Menambahkan anggota ke project: '.$project->name,
             ]);
         }
 
         $msg = $added > 0 ? "$added member berhasil ditambahkan." : 'Tidak ada member baru yang ditambahkan.';
+
         return back()->with('success', $msg);
     }
 
@@ -588,7 +592,7 @@ class ProjectController extends Controller
     {
         $project = $this->findByToken($token);
 
-        if (!$project->isManager(Auth::user())) {
+        if (! $project->isManager(Auth::user())) {
             abort(403, 'Only project manager can manage project members.');
         }
 
@@ -605,7 +609,7 @@ class ProjectController extends Controller
     {
         $project = $this->findByToken($token);
 
-        if (!$project->isManager(Auth::user())) {
+        if (! $project->isManager(Auth::user())) {
             abort(403, 'Only project manager can manage project members.');
         }
 
@@ -658,9 +662,7 @@ class ProjectController extends Controller
 
     public function managementIndex()
     {
-        if (!Auth::user()->isSuperAdmin()) {
-            abort(403);
-        }
+        Gate::authorize('management-projects.view');
 
         $totalUsers = User::count();
 
@@ -686,7 +688,7 @@ class ProjectController extends Controller
 
         $canEdit = $isSuperAdmin || in_array($userRole, ['manager', 'member']);
 
-        if (!$canEdit) {
+        if (! $canEdit) {
             abort(403, 'You do not have permission to update project status.');
         }
 
@@ -697,7 +699,7 @@ class ProjectController extends Controller
             'action' => 'status_changed',
             'entity_type' => 'project',
             'entity_id' => $project->id,
-            'description' => 'Mengubah status project: ' . $project->name . ' menjadi ' . $request->status,
+            'description' => 'Mengubah status project: '.$project->name.' menjadi '.$request->status,
         ]);
 
         return back()->with('success', 'Project status updated.');
@@ -725,7 +727,7 @@ class ProjectController extends Controller
             $projectEnd = $project->end_date ? \Carbon\Carbon::parse($project->end_date) : $projectStart->copy()->addDay();
 
             $tasks[] = [
-                'id' => 'p_' . $project->id,
+                'id' => 'p_'.$project->id,
                 'text' => $project->name,
                 'start_date' => $projectStart->format('d-m-Y'),
                 'duration' => max(1, $projectStart->diffInDays($projectEnd) + 1),

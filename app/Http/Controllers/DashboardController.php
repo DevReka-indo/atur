@@ -2,18 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use App\Jobs\SendEmailNotification;
+use App\Models\DeviceUser;
+use App\Models\Notification;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
-use App\Models\DeviceUser;
-use Illuminate\Support\Facades\DB;
-use App\Models\Notification;
-use App\Jobs\SendEmailNotification;
-use Carbon\Carbon;
-
 
 class DashboardController extends Controller
 {
@@ -33,9 +30,10 @@ class DashboardController extends Controller
             'completed_tasks' => $allProjects->filter(function ($project) {
                 $totalWeight = $project->tasks->sum('weight');
                 $earnedValue = $project->tasks->sum(
-                    fn($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
+                    fn ($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
                 );
                 $progress = $totalWeight > 0 ? ($earnedValue / $totalWeight) * 100 : 0;
+
                 return $progress >= 100;
             })->count(),
         ];
@@ -70,7 +68,7 @@ class DashboardController extends Controller
             if ($status === 'urgent') {
                 $totalWeight = $project->tasks->sum('weight');
                 $earnedValue = $project->tasks->sum(
-                    fn($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
+                    fn ($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
                 );
                 $progress = $totalWeight > 0 ? ($earnedValue / $totalWeight) * 100 : 0;
 
@@ -93,7 +91,7 @@ class DashboardController extends Controller
             ->orderBy('due_date')
             ->get();
 
-        $isSuperAdmin = $user->role === 'super_admin';
+        $isSuperAdmin = $user->isSuperAdmin();
 
         $overloadedMembers = collect();
         $projects = $isSuperAdmin
@@ -101,7 +99,7 @@ class DashboardController extends Controller
             : $user->projects()->with('members')->get();
 
         foreach ($projects as $project) {
-            if (!$isSuperAdmin && !$project->members->contains('id', $user->id)) {
+            if (! $isSuperAdmin && ! $project->members->contains('id', $user->id)) {
                 continue;
             }
 
@@ -113,11 +111,11 @@ class DashboardController extends Controller
 
                 if ($count >= 5) {
                     $overloadedMembers->push([
-                        'name'          => $member->name,
-                        'project'       => $project->name,
-                        'task_count'    => $count,
+                        'name' => $member->name,
+                        'project' => $project->name,
+                        'task_count' => $count,
                         'project_token' => $project->token,
-                        'project_id'    => $project->id,
+                        'project_id' => $project->id,
                     ]);
                 }
             }
@@ -179,7 +177,7 @@ class DashboardController extends Controller
             return response()->json([
                 'workspaces' => [],
                 'projects' => [],
-                'tasks' => []
+                'tasks' => [],
             ]);
         }
 
@@ -208,20 +206,19 @@ class DashboardController extends Controller
         return response()->json([
             'workspaces' => $workspaces,
             'projects' => $projects,
-            'tasks' => $tasks
+            'tasks' => $tasks,
         ]);
     }
 
     // SWITCH ACCOUNT
     public function switchAccount($id)
-
     {
         abort_if(Auth::id() == $id, 403);
 
         // CATAT LAST ACTIVITY AKUN YANG DITINGGALKAN
         if (Auth::check()) {
             Auth::user()->update([
-                'last_activity' => now()
+                'last_activity' => now(),
             ]);
         }
 
@@ -231,7 +228,7 @@ class DashboardController extends Controller
             ->where('user_id', $id)
             ->exists();
 
-        abort_if(!$allowed, 403);
+        abort_if(! $allowed, 403);
 
         Auth::logout();
         Auth::loginUsingId($id);
@@ -259,9 +256,10 @@ class DashboardController extends Controller
     // DEVICE ID
     private function getDeviceId()
     {
-        if (!request()->cookie('device_id')) {
+        if (! request()->cookie('device_id')) {
             $deviceId = Str::uuid()->toString();
             cookie()->queue('device_id', $deviceId, 60 * 24 * 365);
+
             return $deviceId;
         }
 
@@ -275,12 +273,11 @@ class DashboardController extends Controller
 
         DeviceUser::firstOrCreate([
             'device_id' => $deviceId,
-            'user_id'   => Auth::id(),
+            'user_id' => Auth::id(),
         ]);
     }
 
-
-    //notifikasi
+    // notifikasi
     public function notifications()
     {
         $userId = Auth::id();
@@ -291,14 +288,17 @@ class DashboardController extends Controller
             ->orderBy('created_at', 'desc')
             ->get()
             ->filter(function ($notif) {
-                if ($notif->task_id && !$notif->task) {
+                if ($notif->task_id && ! $notif->task) {
                     $notif->delete();
+
                     return false;
                 }
-                if ($notif->project_id && !$notif->project) {
+                if ($notif->project_id && ! $notif->project) {
                     $notif->delete();
+
                     return false;
                 }
+
                 return true;
             });
 
@@ -389,13 +389,13 @@ class DashboardController extends Controller
         $latest = $priorityNotifs->merge($otherNotifs)
             ->map(function ($n) {
                 return [
-                    'id'         => $n->id,
-                    'type'       => $n->type,
-                    'title'      => $n->title,
-                    'message'    => $n->message,
-                    'task_id'    => $n->task_id,
+                    'id' => $n->id,
+                    'type' => $n->type,
+                    'title' => $n->title,
+                    'message' => $n->message,
+                    'task_id' => $n->task_id,
                     'project_id' => $n->project_id,
-                    'time'       => $n->created_at->diffForHumans(),
+                    'time' => $n->created_at->diffForHumans(),
                 ];
             });
 
@@ -444,7 +444,7 @@ class DashboardController extends Controller
             : $user->projects()->with('members')->get();
 
         foreach ($projects as $project) {
-            if (!$isSuperAdmin && !$project->members->contains('id', $user->id)) {
+            if (! $isSuperAdmin && ! $project->members->contains('id', $user->id)) {
                 continue;
             }
 
@@ -453,11 +453,11 @@ class DashboardController extends Controller
                     ->assignedToUser($member->id)
                     ->whereNotIn('status', ['completed', 'cancelled'])
                     ->get()
-                    ->map(fn($t) => [
-                        'title'          => $t->name,
-                        'status'         => $t->status,
-                        'due_date'       => $t->due_date ? \Carbon\Carbon::parse($t->due_date)->format('d M Y') : null,
-                        'token'          => $t->token,
+                    ->map(fn ($t) => [
+                        'title' => $t->name,
+                        'status' => $t->status,
+                        'due_date' => $t->due_date ? \Carbon\Carbon::parse($t->due_date)->format('d M Y') : null,
+                        'token' => $t->token,
                         'days_until_due' => $t->due_date ? (int) now()->startOfDay()->diffInDays(\Carbon\Carbon::parse($t->due_date)->startOfDay(), false) : null,
                     ])->toArray();
 
@@ -465,12 +465,12 @@ class DashboardController extends Controller
 
                 if ($count >= 5) {
                     $overloadedMembers->push([
-                        'name'          => $member->name,
-                        'initial'       => strtoupper(substr($member->name, 0, 1)),
-                        'project'       => $project->name,
-                        'task_count'    => $count,
+                        'name' => $member->name,
+                        'initial' => strtoupper(substr($member->name, 0, 1)),
+                        'project' => $project->name,
+                        'task_count' => $count,
                         'project_token' => $project->token,
-                        'tasks'         => $tasks,
+                        'tasks' => $tasks,
                     ]);
                 }
             }
@@ -488,7 +488,9 @@ class DashboardController extends Controller
         $isSuperAdmin = $currentUser->isSuperAdmin();
 
         if ($isSuperAdmin) {
-            if (cache()->has("overload_sent_{$currentUser->id}")) return;
+            if (cache()->has("overload_sent_{$currentUser->id}")) {
+                return;
+            }
 
             $overloadCount = $overloadedMembers->count();
 
@@ -497,19 +499,19 @@ class DashboardController extends Controller
                 ->delete();
 
             Notification::create([
-                'user_id'    => $currentUser->id,
-                'type'       => 'member_overload',
-                'title'      => 'Member Overload Detected',
-                'message'    => $overloadCount . ' member(s) are overloaded across all projects! Please redistribute the tasks immediately.',
-                'task_id'    => null,
+                'user_id' => $currentUser->id,
+                'type' => 'member_overload',
+                'title' => 'Member Overload Detected',
+                'message' => $overloadCount.' member(s) are overloaded across all projects! Please redistribute the tasks immediately.',
+                'task_id' => null,
                 'project_id' => null,
-                'read_at'    => null,
+                'read_at' => null,
             ]);
 
             SendEmailNotification::dispatch(
                 $currentUser,
                 'Member Overload Detected',
-                $overloadCount . ' member(s) are overloaded across all projects! Please redistribute the tasks immediately.',
+                $overloadCount.' member(s) are overloaded across all projects! Please redistribute the tasks immediately.',
                 route('overload.index'),
             );
 
@@ -522,12 +524,16 @@ class DashboardController extends Controller
                     ->where('token', $projectToken)
                     ->first();
 
-                if (!$project) continue;
+                if (! $project) {
+                    continue;
+                }
 
                 $overloadCount = $members->count();
 
                 foreach ($project->members as $recipient) {
-                    if (cache()->has("overload_sent_{$recipient->id}_{$project->id}")) continue;
+                    if (cache()->has("overload_sent_{$recipient->id}_{$project->id}")) {
+                        continue;
+                    }
 
                     Notification::where('user_id', $recipient->id)
                         ->where('type', 'member_overload')
@@ -535,19 +541,19 @@ class DashboardController extends Controller
                         ->delete();
 
                     Notification::create([
-                        'user_id'    => $recipient->id,
-                        'type'       => 'member_overload',
-                        'title'      => 'Member Overload Detected',
-                        'message'    => $overloadCount . ' member(s) are overloaded in project ' . $project->name . '! Please redistribute the tasks immediately.',
-                        'task_id'    => null,
+                        'user_id' => $recipient->id,
+                        'type' => 'member_overload',
+                        'title' => 'Member Overload Detected',
+                        'message' => $overloadCount.' member(s) are overloaded in project '.$project->name.'! Please redistribute the tasks immediately.',
+                        'task_id' => null,
                         'project_id' => $project->id,
-                        'read_at'    => null,
+                        'read_at' => null,
                     ]);
 
                     SendEmailNotification::dispatch(
                         $recipient,
                         'Member Overload Detected',
-                        $overloadCount . ' member(s) are overloaded in project ' . $project->name . '! Please redistribute the tasks immediately.',
+                        $overloadCount.' member(s) are overloaded in project '.$project->name.'! Please redistribute the tasks immediately.',
                         route('overload.index'),
                     );
 
@@ -556,9 +562,12 @@ class DashboardController extends Controller
             }
         }
     }
+
     public function sendDeadlineNotificationsPublic($user)
     {
-        if (cache()->has("deadline_sent_{$user->id}")) return;
+        if (cache()->has("deadline_sent_{$user->id}")) {
+            return;
+        }
 
         Notification::where('user_id', $user->id)
             ->where('type', 'deadline_warning')
@@ -574,7 +583,7 @@ class DashboardController extends Controller
             SendEmailNotification::dispatch(
                 $user,
                 'Upcoming Deadline',
-                'You have ' . $deadlineCount . ' task(s) approaching or past the deadline! Please complete them immediately.',
+                'You have '.$deadlineCount.' task(s) approaching or past the deadline! Please complete them immediately.',
                 route('overload.index'),
             );
         }
@@ -590,20 +599,20 @@ class DashboardController extends Controller
                 ->delete();
 
             Notification::create([
-                'user_id'    => $user->id,
-                'type'       => 'urgent_task',
-                'title'      => 'Urgent Task Alert',
-                'message'    => 'You have ' . $urgentTasks->count() . ' urgent task(s) that need immediate attention!',
-                'task_id'    => null,
+                'user_id' => $user->id,
+                'type' => 'urgent_task',
+                'title' => 'Urgent Task Alert',
+                'message' => 'You have '.$urgentTasks->count().' urgent task(s) that need immediate attention!',
+                'task_id' => null,
                 'project_id' => null,
-                'read_at'    => null,
+                'read_at' => null,
             ]);
 
             foreach ($urgentTasks as $task) {
                 SendEmailNotification::dispatch(
                     $user,
                     'Urgent Task Alert',
-                    'Task "' . $task->name . '" needs immediate attention!',
+                    'Task "'.$task->name.'" needs immediate attention!',
                     route('tasks.show', $task->token),
                 );
             }
@@ -611,9 +620,12 @@ class DashboardController extends Controller
 
         cache()->forever("deadline_sent_{$user->id}", true);
     }
+
     public function sendOverloadNotificationsOnLogin($user)
     {
-        if (cache()->has("overload_sent_{$user->id}")) return;
+        if (cache()->has("overload_sent_{$user->id}")) {
+            return;
+        }
 
         $isSuperAdmin = $user->isSuperAdmin();
 
@@ -624,7 +636,7 @@ class DashboardController extends Controller
         $overloadedMembers = collect();
 
         foreach ($projects as $project) {
-            if (!$isSuperAdmin && !$project->members->contains('id', $user->id)) {
+            if (! $isSuperAdmin && ! $project->members->contains('id', $user->id)) {
                 continue;
             }
             foreach ($project->members as $member) {
@@ -635,11 +647,11 @@ class DashboardController extends Controller
 
                 if ($count >= 5) {
                     $overloadedMembers->push([
-                        'name'          => $member->name,
-                        'project'       => $project->name,
-                        'task_count'    => $count,
+                        'name' => $member->name,
+                        'project' => $project->name,
+                        'task_count' => $count,
                         'project_token' => $project->token,
-                        'project_id'    => $project->id,
+                        'project_id' => $project->id,
                     ]);
                 }
             }
@@ -649,6 +661,7 @@ class DashboardController extends Controller
             Notification::where('user_id', $user->id)
                 ->where('type', 'member_overload')
                 ->delete();
+
             return;
         }
 

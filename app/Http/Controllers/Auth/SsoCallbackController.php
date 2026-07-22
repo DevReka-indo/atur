@@ -8,6 +8,7 @@ use App\Services\SsoTokenService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Throwable;
@@ -51,10 +52,8 @@ class SsoCallbackController extends Controller
                     ->with('error', 'Akun Anda tidak aktif.');
             }
 
-            $isNewUser = ! $user;
-
             if (! $user) {
-                $user = new User();
+                $user = new User;
             }
 
             $user->name = $ssoUser['name'] ?? $user->name ?? $ssoUser['employee_id'] ?? 'SSO User';
@@ -79,14 +78,13 @@ class SsoCallbackController extends Controller
                 $user->is_active = true;
             }
 
-            // Mapping role SSO ke role ATUR (string: super_admin / member)
-            $user->role = $this->mapSsoRoleToLocalRole(
-                $ssoUser['roles'] ?? [],
-                $user->role ?? null,
-                $isNewUser
-            );
+            $mappedRole = $this->mapSsoRoleToLocalRole($ssoUser['roles'] ?? []);
 
-            $user->save();
+            DB::transaction(function () use ($user, $mappedRole): void {
+                $user->role = $mappedRole;
+                $user->save();
+                $user->syncRoles([$mappedRole]);
+            });
 
             Auth::login($user, true);
 
@@ -98,7 +96,7 @@ class SsoCallbackController extends Controller
 
             return redirect()
                 ->route('sso.login')
-                ->with('error', 'Login SSO gagal: ' . $e->getMessage());
+                ->with('error', 'Login SSO gagal: '.$e->getMessage());
         }
     }
 
@@ -106,10 +104,10 @@ class SsoCallbackController extends Controller
      * Mapping role dari SSO ke role lokal ATUR.
      *
      * - Kalau role SSO mengandung admin/super-admin -> super_admin
-     * - Kalau user lama dan tidak match apapun -> pertahankan role lama
-     * - Kalau user baru dan tidak match apapun -> default member
+     * - Kalau role SSO mengandung contributor -> contributor
+     * - Selain itu -> member
      */
-    private function mapSsoRoleToLocalRole(array $roles, ?string $currentRole, bool $isNewUser): string
+    private function mapSsoRoleToLocalRole(array $roles): string
     {
         $roles = collect($roles)->map(fn ($r) => strtolower((string) $r));
 
@@ -117,8 +115,8 @@ class SsoCallbackController extends Controller
             return 'super_admin';
         }
 
-        if (! $isNewUser && $currentRole) {
-            return $currentRole;
+        if ($roles->contains('contributor')) {
+            return 'contributor';
         }
 
         return 'member';

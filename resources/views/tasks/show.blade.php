@@ -54,7 +54,7 @@
             return $userColors[abs($index)];
         };
 
-        $canChangeTaskStatus = $canContribute && !$taskHasSubtasks && (Auth::user()->role ?? 'member') !== 'viewer';
+        $canChangeTaskStatus = $canContribute && !$taskHasSubtasks;
     @endphp
 
     <div class="fixed inset-0 bg-gradient-to-br from-gray-50 to-gray-100/50 -z-10"></div>

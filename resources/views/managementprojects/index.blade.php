@@ -252,6 +252,10 @@
                                 {{-- Actions: Edit + Delete only --}}
                                 <td class="px-6 py-4">
                                     <div class="flex items-center justify-center gap-1">
+                                        <a href="{{ route('projects.show', $project->token) }}" title="View"
+                                            class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors">
+                                            <i class="fa-solid fa-eye"></i>
+                                        </a>
                                         <a href="{{ route('projects.edit', $project->token) }}" title="Edit"
                                             class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors">
                                             <i class="fa-solid fa-pen"></i>

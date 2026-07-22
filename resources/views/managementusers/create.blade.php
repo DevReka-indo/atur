@@ -88,9 +88,11 @@
                                 class="w-full px-4 py-3 border border-gray-300 rounded-xl appearance-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all duration-200 @error('role') border-red-400 bg-red-50/50 @enderror"
                                 required>
                                 <option value="" disabled {{ old('role') ? '' : 'selected' }}>Choose a role</option>
-                                <option value="member" {{ old('role') === 'member' ? 'selected' : '' }}>Member</option>
-                                <option value="super_admin" {{ old('role') === 'super_admin' ? 'selected' : '' }}>Super
-                                    Admin</option>
+                                @foreach ($roles as $role)
+                                    <option value="{{ $role->name }}" @selected(old('role') === $role->name)>
+                                        {{ str($role->name)->headline() }}
+                                    </option>
+                                @endforeach
                             </select>
                             @error('role')
                                 <div class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">

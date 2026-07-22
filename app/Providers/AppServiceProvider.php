@@ -2,10 +2,12 @@
 
 namespace App\Providers;
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\View;
-use App\Models\UserNotification;
 use App\Models\Project;
+use App\Models\User;
+use App\Models\UserNotification;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\View;
+use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -13,6 +15,8 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Gate::before(fn (User $user): ?bool => $user->isSuperAdmin() ? true : null);
+
         View::composer('*', function ($view) {
 
             if (auth()->check()) {
@@ -26,11 +30,11 @@ class AppServiceProvider extends ServiceProvider
 
                 try {
                     $projects = Project::where(function ($q) use ($user) {
-                        $q->whereHas('members', fn($q) => $q->where('user_id', $user->id))
+                        $q->whereHas('members', fn ($q) => $q->where('user_id', $user->id))
                             ->orWhere('created_by', $user->id);
                     })
-                    ->with(['threads.userReads' => fn($q) => $q->where('user_id', $user->id)])
-                    ->get();
+                        ->with(['threads.userReads' => fn ($q) => $q->where('user_id', $user->id)])
+                        ->get();
 
                     foreach ($projects as $project) {
                         foreach ($project->threads as $thread) {

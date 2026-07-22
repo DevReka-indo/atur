@@ -2,14 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Workspace;
+use App\Models\ActivityLog;
 use App\Models\Notification;
 use App\Models\Task;
 use App\Models\User;
+use App\Models\Workspace;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Models\ActivityLog;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class WorkspaceController extends Controller
 {
@@ -27,7 +28,7 @@ class WorkspaceController extends Controller
                 $q->with(['tasks.statusWeight'])
                     ->where(function ($q) {
                         $q->where('status', 'urgent')
-                            ->orWhereHas('tasks', fn($q) => $q->where('priority', 'urgent'));
+                            ->orWhereHas('tasks', fn ($q) => $q->where('priority', 'urgent'));
                     });
             }])
             ->latest()
@@ -44,27 +45,28 @@ class WorkspaceController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name'        => 'required|string|max:255',
+            'name' => 'required|string|max:255',
             'description' => 'nullable|string',
         ]);
 
         $workspace = Workspace::create([
-            'name'        => $validated['name'],
+            'name' => $validated['name'],
             'description' => $validated['description'],
-            'created_by'  => Auth::id(),
+            'created_by' => Auth::id(),
         ]);
 
         $workspace->members()->attach(Auth::id(), [
-            'role'      => Workspace::ROLE_OWNER,
+            'role' => Workspace::ROLE_OWNER,
             'joined_at' => now(),
         ]);
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'created',
+            'user_id' => Auth::id(),
+            'action' => 'created',
             'entity_type' => 'workspace',
-            'entity_id'   => $workspace->id,
-            'description' => 'Membuat workspace: ' . $workspace->name,
+            'entity_id' => $workspace->id,
+            'description' => 'Membuat workspace: '.$workspace->name,
         ]);
+
         return redirect()->route('workspaces.show', $workspace->token)
             ->with('success', 'Workspace created successfully!');
     }
@@ -72,9 +74,9 @@ class WorkspaceController extends Controller
     public function show(string $token)
     {
         $workspace = $this->findByToken($token);
-        $user      = Auth::user();
+        $user = Auth::user();
 
-        if (!$user->isSuperAdmin() && !$workspace->isMember($user)) {
+        if (! $user->isSuperAdmin() && ! $workspace->isMember($user)) {
             abort(403, 'You do not have access to this workspace.');
         }
 
@@ -97,13 +99,14 @@ class WorkspaceController extends Controller
             $workspace->projects->sortBy(function ($project) {
                 $totalWeight = $project->tasks->sum('weight');
                 $earnedValue = $project->tasks->sum(
-                    fn($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
+                    fn ($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
                 );
                 $progress = $totalWeight > 0 ? ($earnedValue / $totalWeight) * 100 : 0;
 
                 if ($project->status === 'urgent' && $progress < 100) {
                     return 0;
                 }
+
                 return 1;
             })->values()
         );
@@ -114,7 +117,7 @@ class WorkspaceController extends Controller
 
         $currentRole = $workspace->roleForUser($user);
 
-        if (!$workspace->invite_token) {
+        if (! $workspace->invite_token) {
             $workspace->generateInviteToken();
         }
 
@@ -125,7 +128,7 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageSettings(Auth::user())) {
+        if (! $workspace->canManageSettings(Auth::user())) {
             abort(403, 'Only workspace owner can edit this workspace.');
         }
 
@@ -136,23 +139,24 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageSettings(Auth::user())) {
+        if (! $workspace->canManageSettings(Auth::user())) {
             abort(403, 'Only workspace owner can update this workspace.');
         }
 
         $validated = $request->validate([
-            'name'        => 'required|string|max:255',
+            'name' => 'required|string|max:255',
             'description' => 'nullable|string',
         ]);
 
         $workspace->update($validated);
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'updated',
+            'user_id' => Auth::id(),
+            'action' => 'updated',
             'entity_type' => 'workspace',
-            'entity_id'   => $workspace->id,
-            'description' => 'Mengubah workspace: ' . $workspace->name,
+            'entity_id' => $workspace->id,
+            'description' => 'Mengubah workspace: '.$workspace->name,
         ]);
+
         return redirect()->route('workspaces.show', $workspace->token)
             ->with('success', 'Workspace updated successfully!');
     }
@@ -161,15 +165,15 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageSettings(Auth::user())) {
+        if (! $workspace->canManageSettings(Auth::user())) {
             abort(403, 'Only workspace owner can delete this workspace.');
         }
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'deleted',
+            'user_id' => Auth::id(),
+            'action' => 'deleted',
             'entity_type' => 'workspace',
-            'entity_id'   => $workspace->id,
-            'description' => 'Menghapus workspace: ' . $workspace->name,
+            'entity_id' => $workspace->id,
+            'description' => 'Menghapus workspace: '.$workspace->name,
         ]);
         $workspace->delete();
 
@@ -181,13 +185,13 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageMembers(Auth::user())) {
+        if (! $workspace->canManageMembers(Auth::user())) {
             abort(403, 'Only workspace owner/admin can add members.');
         }
 
         $validated = $request->validate([
             'user_id' => 'required|exists:users,id',
-            'role'    => 'required|in:admin,member',
+            'role' => 'required|in:admin,member',
         ]);
 
         if ($workspace->members()->where('user_id', $validated['user_id'])->exists()) {
@@ -195,16 +199,17 @@ class WorkspaceController extends Controller
         }
 
         $workspace->members()->attach($validated['user_id'], [
-            'role'      => $validated['role'],
+            'role' => $validated['role'],
             'joined_at' => now(),
         ]);
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'assigned',
+            'user_id' => Auth::id(),
+            'action' => 'assigned',
             'entity_type' => 'workspace',
-            'entity_id'   => $workspace->id,
-            'description' => 'Menambahkan anggota ke workspace: ' . $workspace->name,
+            'entity_id' => $workspace->id,
+            'description' => 'Menambahkan anggota ke workspace: '.$workspace->name,
         ]);
+
         return back()->with('success', 'Member added successfully.');
     }
 
@@ -212,7 +217,7 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageMembers(Auth::user())) {
+        if (! $workspace->canManageMembers(Auth::user())) {
             abort(403, 'Only workspace owner/admin can update members.');
         }
 
@@ -230,7 +235,7 @@ class WorkspaceController extends Controller
 
         $workspace->members()->updateExistingPivot($user->id, ['role' => $validated['role']]);
 
-        return redirect(route('workspaces.show', $workspace->token) . '?tab=members')
+        return redirect(route('workspaces.show', $workspace->token).'?tab=members')
             ->with('success', 'Member role updated.');
     }
 
@@ -238,7 +243,7 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageMembers(Auth::user())) {
+        if (! $workspace->canManageMembers(Auth::user())) {
             abort(403, 'Only workspace owner/admin can remove members.');
         }
         if ($workspace->isOwner($user)) {
@@ -249,23 +254,23 @@ class WorkspaceController extends Controller
         }
 
         $projectsWithUser = $workspace->projects()
-            ->whereHas('members', fn($q) => $q->where('user_id', $user->id))
+            ->whereHas('members', fn ($q) => $q->where('user_id', $user->id))
             ->get(['id', 'name']);
 
         if ($projectsWithUser->isNotEmpty() && request()->expectsJson()) {
             return response()->json([
                 'needs_confirmation' => true,
-                'user_name'          => $user->name,
-                'project_count'      => $projectsWithUser->count(),
-                'project_names'      => $projectsWithUser->pluck('name'),
-                'cascade_url'        => route('workspaces.members.destroy.cascade', [$workspace->token, $user]),
+                'user_name' => $user->name,
+                'project_count' => $projectsWithUser->count(),
+                'project_names' => $projectsWithUser->pluck('name'),
+                'cascade_url' => route('workspaces.members.destroy.cascade', [$workspace->token, $user]),
                 'workspace_only_url' => route('workspaces.members.destroy', [$workspace->token, $user]),
             ]);
         }
 
         $workspace->members()->detach($user->id);
 
-        return redirect(route('workspaces.show', $workspace->token) . '?tab=members')
+        return redirect(route('workspaces.show', $workspace->token).'?tab=members')
             ->with('success', 'Member removed from workspace.');
     }
 
@@ -273,7 +278,7 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageMembers(Auth::user())) {
+        if (! $workspace->canManageMembers(Auth::user())) {
             abort(403);
         }
         if ($workspace->isOwner($user)) {
@@ -357,7 +362,7 @@ class WorkspaceController extends Controller
             ]);
         });
 
-        return redirect(route('workspaces.show', $workspace->token) . '?tab=members')
+        return redirect(route('workspaces.show', $workspace->token).'?tab=members')
             ->with('success', 'Member removed from workspace and all projects.');
     }
 
@@ -365,7 +370,7 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageMembers(auth()->user())) {
+        if (! $workspace->canManageMembers(auth()->user())) {
             abort(403);
         }
 
@@ -378,7 +383,7 @@ class WorkspaceController extends Controller
     {
         $workspace = $this->findByToken($token);
 
-        if (!$workspace->canManageMembers(auth()->user())) {
+        if (! $workspace->canManageMembers(auth()->user())) {
             abort(403);
         }
 
@@ -389,9 +394,7 @@ class WorkspaceController extends Controller
 
     public function managementIndex()
     {
-        if (!Auth::user()->isSuperAdmin()) {
-            abort(403);
-        }
+        Gate::authorize('management-workspaces.view');
 
         $workspaces = Workspace::with(['creator', 'members', 'projects'])
             ->withCount(['members', 'projects'])
@@ -403,9 +406,7 @@ class WorkspaceController extends Controller
 
     public function managementDestroy(string $token)
     {
-        if (!Auth::user()->isSuperAdmin()) {
-            abort(403);
-        }
+        Gate::authorize('management-workspaces.delete');
 
         $workspace = $this->findByToken($token);
         $workspace->delete();

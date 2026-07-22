@@ -8,6 +8,7 @@ use App\Models\Task;
 use App\Models\TaskStatusHistory;
 use App\Models\User;
 use App\Models\Workspace;
+use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -20,6 +21,7 @@ class UserManagementDeletionSafetyTest extends TestCase
         parent::setUp();
 
         $this->createTestSchema();
+        $this->seed(RolePermissionSeeder::class);
     }
 
     public function test_regular_member_cannot_access_any_user_management_mutation(): void
@@ -293,6 +295,9 @@ class UserManagementDeletionSafetyTest extends TestCase
             $table->rememberToken();
             $table->timestamps();
         });
+
+        $permissionMigration = require database_path('migrations/2026_07_22_083512_create_permission_tables.php');
+        $permissionMigration->up();
 
         Schema::create('workspaces', function (Blueprint $table): void {
             $table->id();

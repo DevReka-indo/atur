@@ -92,10 +92,13 @@
                 request()->routeIs('managementprojects.*') ||
                 request()->routeIs('users.*') ||
                 request()->routeIs('management-users.*') ||
-                request()->routeIs('managementworkspaces.*');
+                request()->routeIs('managementworkspaces.*') ||
+                request()->routeIs('management-roles.*') ||
+                request()->routeIs('management-permissions.*');
         @endphp
 
-        @if (auth()->check() && auth()->user()->isSuperAdmin())
+        @if (auth()->check() && (auth()->user()->isSuperAdmin() || auth()->user()->isPermissionSystemReady()))
+            @canany(['management-users.view', 'management-projects.view', 'management-workspaces.view', 'roles.view', 'permissions.view'])
             <p class="px-4 pt-4 pb-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                 Lainnya
             </p>
@@ -116,7 +119,8 @@
                 {{-- DROPDOWN --}}
                 <div id="pengaturan-menu" class="space-y-1 {{ $pengaturanActive ? '' : 'hidden' }}">
 
-                    <a href="{{ route('managementworkspaces.index') }}"
+                    @can('management-workspaces.view')
+                        <a href="{{ route('managementworkspaces.index') }}"
                         class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('managementworkspaces.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
                         style="{{ request()->routeIs('managementworkspaces.*') ? 'background-color: #0096c7' : '' }}">
@@ -125,9 +129,11 @@
                                 class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('managementworkspaces.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
                         </span>
                         <span class="font-medium">Management Workspaces</span>
-                    </a>
+                        </a>
+                    @endcan
 
-                    <a href="{{ route('managementprojects.index') }}"
+                    @can('management-projects.view')
+                        <a href="{{ route('managementprojects.index') }}"
                         class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('managementprojects.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
                         style="{{ request()->routeIs('managementprojects.*') ? 'background-color: #0096c7' : '' }}">
@@ -136,9 +142,11 @@
                                 class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('managementprojects.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
                         </span>
                         <span class="font-medium">Management Projects</span>
-                    </a>
+                        </a>
+                    @endcan
 
-                    <a href="{{ route('management-users.index') }}"
+                    @can('management-users.view')
+                        <a href="{{ route('management-users.index') }}"
                         class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('management-users.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
                         style="{{ request()->routeIs('management-users.*') ? 'background-color: #0096c7' : '' }}">
@@ -147,9 +155,24 @@
                                 class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('management-users.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
                         </span>
                         <span class="font-medium">Management Users</span>
-                    </a>
+                        </a>
+                    @endcan
+
+                    @can('roles.view')
+                        <a href="{{ route('management-roles.index') }}"
+                        class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
+            {{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
+                        style="{{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'background-color: #0096c7' : '' }}">
+                        <span class="w-5 flex justify-center ml-6">
+                            <span
+                                class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
+                        </span>
+                        <span class="font-medium">Role &amp; Permissions</span>
+                        </a>
+                    @endcan
                 </div>
             </nav>
+            @endcanany
         @endif
 
     </div>

@@ -6,11 +6,15 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Schema;
+use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, HasRoles, Notifiable;
+
+    protected string $guard_name = 'web';
 
     /**
      * The attributes that are mass assignable.
@@ -53,6 +57,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            'last_activity' => 'datetime',
         ];
     }
 
@@ -61,7 +66,6 @@ class User extends Authenticatable
     {
         return $this->is_active == 1;
     }
-
 
     /**
      * Workspaces yang dibuat oleh user ini
@@ -89,14 +93,25 @@ class User extends Authenticatable
         return $this->hasMany(Project::class, 'created_by');
     }
 
-    public function isSuperAdmin()
+    public function isSuperAdmin(): bool
     {
-        return $this->role === 'super_admin';
+        return $this->hasCompatibleGlobalRole('super_admin');
     }
 
-    public function isMember()
+    public function isContributor(): bool
     {
-        return $this->role === 'member';
+        return $this->hasCompatibleGlobalRole('contributor');
+    }
+
+    public function isMember(): bool
+    {
+        return $this->hasCompatibleGlobalRole('member');
+    }
+
+    public function isPermissionSystemReady(): bool
+    {
+        return Schema::hasTable(config('permission.table_names.roles', 'roles'))
+            && Schema::hasTable(config('permission.table_names.permissions', 'permissions'));
     }
 
     /**
@@ -165,10 +180,6 @@ class User extends Authenticatable
         return $this->hasMany(ActualProgress::class, 'created_by');
     }
 
-    protected $casts = [
-        'last_activity' => 'datetime',
-    ];
-
     public function tasks()
     {
         return $this->hasMany(Task::class);
@@ -178,39 +189,39 @@ class User extends Authenticatable
     {
         $themes = [
             [
-                'avatar'        => 'bg-blue-100 text-blue-700',
+                'avatar' => 'bg-blue-100 text-blue-700',
                 'avatar_border' => 'border-blue-200',
-                'bubble'        => 'bg-blue-50 text-gray-800',
+                'bubble' => 'bg-blue-50 text-gray-800',
                 'bubble_border' => 'border-blue-100',
             ],
             [
-                'avatar'        => 'bg-green-100 text-green-700',
+                'avatar' => 'bg-green-100 text-green-700',
                 'avatar_border' => 'border-green-200',
-                'bubble'        => 'bg-green-50 text-gray-800',
+                'bubble' => 'bg-green-50 text-gray-800',
                 'bubble_border' => 'border-green-100',
             ],
             [
-                'avatar'        => 'bg-purple-100 text-purple-700',
+                'avatar' => 'bg-purple-100 text-purple-700',
                 'avatar_border' => 'border-purple-200',
-                'bubble'        => 'bg-purple-50 text-gray-800',
+                'bubble' => 'bg-purple-50 text-gray-800',
                 'bubble_border' => 'border-purple-100',
             ],
             [
-                'avatar'        => 'bg-yellow-100 text-yellow-700',
+                'avatar' => 'bg-yellow-100 text-yellow-700',
                 'avatar_border' => 'border-yellow-200',
-                'bubble'        => 'bg-yellow-50 text-gray-800',
+                'bubble' => 'bg-yellow-50 text-gray-800',
                 'bubble_border' => 'border-yellow-100',
             ],
             [
-                'avatar'        => 'bg-pink-100 text-pink-700',
+                'avatar' => 'bg-pink-100 text-pink-700',
                 'avatar_border' => 'border-pink-200',
-                'bubble'        => 'bg-pink-50 text-gray-800',
+                'bubble' => 'bg-pink-50 text-gray-800',
                 'bubble_border' => 'border-pink-100',
             ],
             [
-                'avatar'        => 'bg-orange-100 text-orange-700',
+                'avatar' => 'bg-orange-100 text-orange-700',
                 'avatar_border' => 'border-orange-200',
-                'bubble'        => 'bg-orange-50 text-gray-800',
+                'bubble' => 'bg-orange-50 text-gray-800',
                 'bubble_border' => 'border-orange-100',
             ],
         ];
@@ -219,5 +230,18 @@ class User extends Authenticatable
         $theme['initial'] = strtoupper(substr($this->name, 0, 1));
 
         return $theme;
+    }
+
+    private function hasCompatibleGlobalRole(string $role): bool
+    {
+        if (! $this->isPermissionSystemReady()) {
+            return $this->role === $role;
+        }
+
+        if ($this->hasRole($role)) {
+            return true;
+        }
+
+        return $this->roles->isEmpty() && $this->role === $role;
     }
 }

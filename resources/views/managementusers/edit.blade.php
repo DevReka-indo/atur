@@ -58,10 +58,10 @@
                         <select name="role"
                             class="w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none">
 
-                            @foreach (['member', 'super_admin'] as $role)
-                                <option value="{{ $role }}"
-                                    {{ old('role', $management_user->role) === $role ? 'selected' : '' }}>
-                                    {{ ucfirst(str_replace('_', ' ', $role)) }}
+                            @foreach ($roles as $role)
+                                <option value="{{ $role->name }}"
+                                    {{ old('role', $management_user->role) === $role->name ? 'selected' : '' }}>
+                                    {{ str($role->name)->headline() }}
                                 </option>
                             @endforeach
 

@@ -52,7 +52,14 @@
                 </form>
 
                 {{-- Total Badge - Di Kanan --}}
-                <div class="flex-shrink-0">
+                <div class="flex-shrink-0 flex items-center gap-3">
+                    @can('management-users.create')
+                        <a href="{{ route('management-users.create') }}"
+                            class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
+                            <i class="fa-solid fa-user-plus"></i>
+                            Add User
+                        </a>
+                    @endcan
                     <div class="px-4 py-2 bg-white rounded-xl shadow-sm border border-gray-200 text-sm text-gray-600">
                         Total: <span class="font-semibold text-gray-800">{{ $users->total() }}</span>
                     </div>
@@ -149,8 +156,17 @@
                                                 'class' => 'bg-gray-100 text-gray-600 border border-gray-200',
                                                 'icon' => 'fa-solid fa-user',
                                             ],
+                                            'contributor' => [
+                                                'label' => 'Contributor',
+                                                'class' => 'bg-blue-100 text-blue-700 border border-blue-200',
+                                                'icon' => 'fa-solid fa-pen-ruler',
+                                            ],
                                         ];
-                                        $role = $roles[$user->role] ?? $roles['member'];
+                                        $role = $roles[$user->role] ?? [
+                                            'label' => str($user->role)->headline()->toString(),
+                                            'class' => 'bg-violet-100 text-violet-700 border border-violet-200',
+                                            'icon' => 'fa-solid fa-user-tag',
+                                        ];
                                     @endphp
                                     <span class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full {{ $role['class'] }}">
                                         <i class="{{ $role['icon'] }} text-[11px]"></i>
@@ -186,21 +202,25 @@
                                                 You
                                             </span>
                                         @else
-                                            {{-- Edit --}}
-                                            <a href="{{ route('management-users.edit', $user) }}" title="Edit"
-                                                class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors">
-                                                <i class="fa-solid fa-pen"></i>
-                                            </a>
+                                            @can('management-users.update')
+                                                {{-- Edit --}}
+                                                <a href="{{ route('management-users.edit', $user) }}" title="Edit"
+                                                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors">
+                                                    <i class="fa-solid fa-pen"></i>
+                                                </a>
+                                            @endcan
 
-                                            {{-- Delete --}}
-                                            <form method="POST" action="{{ route('management-users.destroy', $user) }}"
-                                                onsubmit="return confirm('Are you sure you want to delete this user?')">
-                                                @csrf @method('DELETE')
-                                                <button type="submit" title="Delete"
-                                                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-500 hover:bg-red-50 transition-colors cursor-pointer">
-                                                    <i class="fa-regular fa-trash-can"></i>
-                                                </button>
-                                            </form>
+                                            @can('management-users.delete')
+                                                {{-- Delete --}}
+                                                <form method="POST" action="{{ route('management-users.destroy', $user) }}"
+                                                    onsubmit="return confirm('Are you sure you want to delete this user?')">
+                                                    @csrf @method('DELETE')
+                                                    <button type="submit" title="Delete"
+                                                        class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-500 hover:bg-red-50 transition-colors cursor-pointer">
+                                                        <i class="fa-regular fa-trash-can"></i>
+                                                    </button>
+                                                </form>
+                                            @endcan
                                         @endif
                                     </div>
                                 </td>

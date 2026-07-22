@@ -1,29 +1,23 @@
 <?php
 
-namespace App\Http\Middleware;
-
 namespace App\Http\Controllers;
 
-use Closure;
-use App\Models\User;
 use App\Models\Invitation;
 use App\Models\ProjectThread;
 use App\Models\ProjectThreadMessage;
 use App\Models\TaskStatusHistory;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Models\Role;
 
 class UserController extends Controller
 {
-    private function checkAdmin(): void
-    {
-        if (!Auth::user()->isSuperAdmin()) {
-            abort(403);
-        }
-    }
-
     /**
      * @return list<string>
      */
@@ -49,14 +43,13 @@ class UserController extends Controller
 
     public function index(Request $request)
     {
-        $this->checkAdmin();
-        $search    = $request->get('search');
-        $sort      = $request->get('sort', 'name');
+        $search = $request->get('search');
+        $sort = $request->get('sort', 'name');
         $direction = $request->get('direction', 'asc');
 
         // Whitelist kolom yang boleh di-sort
         $allowedSorts = ['name', 'role', 'created_at'];
-        if (!in_array($sort, $allowedSorts)) {
+        if (! in_array($sort, $allowedSorts)) {
             $sort = 'name';
         }
         $direction = in_array($direction, ['asc', 'desc']) ? $direction : 'asc';
@@ -76,6 +69,7 @@ class UserController extends Controller
                 ->orderBy('name', 'asc')
                 ->limit(5)
                 ->get(['id', 'name', 'email']);
+
             return response()->json($suggestions);
         }
 
@@ -84,24 +78,30 @@ class UserController extends Controller
 
     public function create()
     {
-        $this->checkAdmin();
-        return view('managementusers.create');
+        return view('managementusers.create', [
+            'roles' => $this->webRoles(),
+        ]);
     }
 
     public function store(Request $request)
     {
-        $this->checkAdmin();
-
         $validated = $request->validate([
-            'name' => 'required',
-            'email' => 'required|email|unique:users',
-            'role' => 'required|in:super_admin,admin,member',
-            'password' => 'required|min:6'
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'unique:users,email'],
+            'role' => [
+                'required',
+                Rule::exists(config('permission.table_names.roles'), 'name')
+                    ->where('guard_name', 'web'),
+            ],
+            'password' => ['required', 'string', 'min:6'],
         ]);
 
         $validated['password'] = Hash::make($validated['password']);
 
-        User::create($validated + ['is_active' => 1]);
+        DB::transaction(function () use ($validated): void {
+            $user = User::create($validated + ['is_active' => true]);
+            $user->syncRoles([$validated['role']]);
+        });
 
         return redirect()->route('management-users.index')
             ->with('success', 'User created successfully.');
@@ -109,37 +109,58 @@ class UserController extends Controller
 
     public function edit(User $management_user)
     {
-        $this->checkAdmin();
-
-        return view('managementusers.edit', compact('management_user'));
+        return view('managementusers.edit', [
+            'management_user' => $management_user,
+            'roles' => $this->webRoles(),
+        ]);
     }
-
 
     public function update(Request $request, User $management_user)
     {
-        $this->checkAdmin();
-
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email,' . $management_user->id,
-            'role' => 'required|string'
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', Rule::unique('users', 'email')->ignore($management_user)],
+            'role' => [
+                'required',
+                Rule::exists(config('permission.table_names.roles'), 'name')
+                    ->where('guard_name', 'web'),
+            ],
+            'password' => ['nullable', 'string', 'min:6'],
         ]);
 
-        $management_user->update([
-            'name' => $request->name,
-            'email' => $request->email,
-            'role' => $request->role,
-        ]);
+        if ($management_user->is(Auth::user()) && $management_user->isSuperAdmin() && $validated['role'] !== 'super_admin') {
+            throw ValidationException::withMessages([
+                'role' => 'Anda tidak dapat menurunkan role super admin milik akun sendiri.',
+            ]);
+        }
+
+        DB::transaction(function () use ($management_user, $validated): void {
+            $attributes = [
+                'name' => $validated['name'],
+                'email' => $validated['email'],
+                'role' => $validated['role'],
+            ];
+
+            if (! empty($validated['password'])) {
+                $attributes['password'] = Hash::make($validated['password']);
+            }
+
+            $management_user->update($attributes);
+            $management_user->syncRoles([$validated['role']]);
+        });
 
         return redirect()
             ->route('management-users.index')
             ->with('success', 'User berhasil diupdate.');
     }
 
-
     public function destroy(User $management_user)
     {
-        $this->checkAdmin();
+        if ($management_user->is(Auth::user())) {
+            throw ValidationException::withMessages([
+                'user' => 'Anda tidak dapat menghapus akun sendiri.',
+            ]);
+        }
 
         $substantiveData = DB::transaction(function () use ($management_user): array {
             $lockedUser = User::whereKey($management_user->id)->lockForUpdate()->firstOrFail();
@@ -158,8 +179,8 @@ class UserController extends Controller
         if ($substantiveData !== []) {
             return back()->withErrors([
                 'user' => 'User tidak dapat dihapus permanen karena memiliki data substantif: '
-                    . implode(', ', $substantiveData)
-                    . '. Nonaktifkan akun melalui perubahan status.',
+                    .implode(', ', $substantiveData)
+                    .'. Nonaktifkan akun melalui perubahan status.',
             ]);
         }
 
@@ -168,27 +189,34 @@ class UserController extends Controller
             ->with('success', 'User berhasil dihapus.');
     }
 
-
     public function toggleStatus(User $management_user)
     {
-        $this->checkAdmin();
+        if ($management_user->is(Auth::user())) {
+            throw ValidationException::withMessages([
+                'user' => 'Anda tidak dapat menonaktifkan akun sendiri.',
+            ]);
+        }
 
         $management_user->update([
-            'is_active' => !$management_user->is_active
+            'is_active' => ! $management_user->is_active,
         ]);
 
         return back()->with('success', 'Status user berhasil diubah.');
     }
 
-    public function handle(Request $request, Closure $next)
+    /** @return Collection<int, Role> */
+    private function webRoles(): Collection
     {
-        if (Auth::check() && !Auth::user()->is_active) {
-            Auth::logout();
+        $systemRoleOrder = ['super_admin', 'contributor', 'member'];
 
-            return redirect('/login')
-                ->with('error', 'Akun Anda tidak aktif.');
-        }
+        return Role::query()
+            ->where('guard_name', 'web')
+            ->get()
+            ->sortBy(function (Role $role) use ($systemRoleOrder): string {
+                $position = array_search($role->name, $systemRoleOrder, true);
 
-        return $next($request);
+                return sprintf('%03d-%s', $position === false ? count($systemRoleOrder) : $position, $role->name);
+            })
+            ->values();
     }
 }

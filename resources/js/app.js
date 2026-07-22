@@ -1,4 +1,5 @@
 import './bootstrap';
+import './management-roles';
 
 import Alpine from 'alpinejs';
 

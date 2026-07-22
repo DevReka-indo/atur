@@ -1,19 +1,21 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\GoogleAuthController;
-use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\WorkspaceController;
-use App\Http\Controllers\ProjectController;
-use App\Http\Controllers\TaskController;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\InvitationController;
-use App\Http\Controllers\DiscussionController;
 use App\Http\Controllers\Auth\SsoCallbackController;
 use App\Http\Controllers\Auth\SsoLoginController;
 use App\Http\Controllers\Auth\SsoRedirectController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DiscussionController;
+use App\Http\Controllers\InvitationController;
+use App\Http\Controllers\PermissionManagementController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\RolePermissionController;
+use App\Http\Controllers\TaskController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\WorkspaceController;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Route;
 
 Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])->name('google.login');
 Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
@@ -31,6 +33,7 @@ Route::get('/', function () {
     if (Auth::check()) {
         return redirect()->route('dashboard');
     }
+
     return view('auth.login');
 });
 
@@ -48,17 +51,17 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings/account', [DashboardController::class, 'account'])->name('settings.account');
     Route::get('/settings/about', [DashboardController::class, 'about'])->name('settings.about');
 
-    //notif
+    // notif
     Route::get('/settings/notifications', [DashboardController::class, 'notifications'])->name('notifications.index');
     Route::get('/notifications/poll', [DashboardController::class, 'poll'])->name('notifications.poll');
     Route::post('/notifications/read-all', [DashboardController::class, 'markAllAsRead'])->name('notifications.readAll');
     Route::post('/notifications/{id}/read', [DashboardController::class, 'markAsRead'])->name('notifications.read');
     Route::delete('/notifications/{id}', [DashboardController::class, 'destroy'])->name('notifications.destroy');
 
-    //activity log
+    // activity log
     Route::get('/activity-log', [DashboardController::class, 'activityLog'])->name('activity.log');
 
-    //overload
+    // overload
     Route::get('/overload', [DashboardController::class, 'overloadList'])->name('overload.index');
 
     // Workspaces
@@ -123,11 +126,51 @@ Route::middleware('auth')->group(function () {
     Route::post('/tasks/{token}/mark-seen', [TaskController::class, 'markSeen'])->name('tasks.markSeen');
 
     // Management
-    Route::resource('management-users', UserController::class);
-    Route::patch('management-users/{management_user}/toggle-status', [UserController::class, 'toggleStatus'])->name('management-users.toggle-status');
-    Route::get('/management-projects', [ProjectController::class, 'managementIndex'])->name('managementprojects.index');
-    Route::get('/management-workspaces', [WorkspaceController::class, 'managementIndex'])->name('managementworkspaces.index');
-    Route::delete('/management-workspaces/{token}', [WorkspaceController::class, 'managementDestroy'])->name('managementworkspaces.destroy');
+    Route::resource('management-users', UserController::class)
+        ->middlewareFor(['index', 'show'], 'permission:management-users.view')
+        ->middlewareFor(['create', 'store'], 'permission:management-users.create')
+        ->middlewareFor(['edit', 'update'], 'permission:management-users.update')
+        ->middlewareFor('destroy', 'permission:management-users.delete');
+    Route::patch('management-users/{management_user}/toggle-status', [UserController::class, 'toggleStatus'])
+        ->middleware('permission:management-users.toggle-status')
+        ->name('management-users.toggle-status');
+    Route::get('/management-projects', [ProjectController::class, 'managementIndex'])
+        ->middleware('permission:management-projects.view')
+        ->name('managementprojects.index');
+    Route::get('/management-workspaces', [WorkspaceController::class, 'managementIndex'])
+        ->middleware('permission:management-workspaces.view')
+        ->name('managementworkspaces.index');
+    Route::delete('/management-workspaces/{token}', [WorkspaceController::class, 'managementDestroy'])
+        ->middleware('permission:management-workspaces.delete')
+        ->name('managementworkspaces.destroy');
+    Route::prefix('management-roles')->name('management-roles.')->group(function () {
+        Route::get('/', [RolePermissionController::class, 'index'])
+            ->middleware('permission:roles.view')
+            ->name('index');
+        Route::get('/create', [RolePermissionController::class, 'create'])
+            ->middleware('permission:roles.create')
+            ->name('create');
+        Route::post('/', [RolePermissionController::class, 'store'])
+            ->middleware('permission:roles.create')
+            ->name('store');
+        Route::get('/{role}/edit', [RolePermissionController::class, 'edit'])
+            ->middleware('permission:roles.view')
+            ->name('edit');
+        Route::put('/{role}', [RolePermissionController::class, 'update'])
+            ->middleware('permission:roles.update')
+            ->name('update');
+    });
+    Route::prefix('management-permissions')->name('management-permissions.')->group(function () {
+        Route::get('/', [PermissionManagementController::class, 'index'])
+            ->middleware('permission:permissions.view')
+            ->name('index');
+        Route::get('/create', [PermissionManagementController::class, 'create'])
+            ->middleware('permission:permissions.create')
+            ->name('create');
+        Route::post('/', [PermissionManagementController::class, 'store'])
+            ->middleware('permission:permissions.create')
+            ->name('store');
+    });
 
     // Discussion
     Route::get('/discussion', [DiscussionController::class, 'index'])->name('discussion.index');
@@ -162,4 +205,4 @@ Route::middleware('auth')->group(function () {
     Route::post('/invitations/decline', [InvitationController::class, 'decline'])->name('invitations.decline');
 });
 
-require __DIR__ . '/auth.php';
+require __DIR__.'/auth.php';
