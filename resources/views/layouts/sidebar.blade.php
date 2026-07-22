@@ -98,80 +98,81 @@
         @endphp
 
         @if (auth()->check() && auth()->user()->isPermissionSystemReady())
-            @canany(['management-users.view', 'management-projects.view', 'management-workspaces.view', 'roles.view', 'permissions.view'])
-            <p class="px-4 pt-4 pb-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                Lainnya
-            </p>
+            @canany(['management-users.view', 'management-projects.view', 'management-workspaces.view', 'roles.view',
+                'permissions.view'])
+                <p class="px-4 pt-4 pb-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Lainnya
+                </p>
 
-            <nav class="px-4 space-y-1">
-                <button id="pengaturan-toggle"
-                    class="w-full flex justify-between items-center px-4 py-2.5 rounded-xl hover:bg-gray-900/10 text-gray-600 hover:text-gray-900 transition-all duration-200">
-                    <span class="flex items-center gap-3 font-medium text-sm">
-                        <i class="fa-solid fa-gear w-5 text-center text-sm"></i>
-                        Pengaturan
-                    </span>
-                    <span id="pengaturan-arrow"
-                        class="transition-transform duration-300 {{ $pengaturanActive ? 'rotate-180' : '' }}">
-                        <i class="fa-solid fa-angle-down text-xs"></i>
-                    </span>
-                </button>
+                <nav class="px-4 space-y-1">
+                    <button id="pengaturan-toggle"
+                        class="w-full flex justify-between items-center px-4 py-2.5 rounded-xl hover:bg-gray-900/10 text-gray-600 hover:text-gray-900 transition-all duration-200">
+                        <span class="flex items-center gap-3 font-medium text-sm">
+                            <i class="fa-solid fa-gear w-5 text-center text-sm"></i>
+                            Pengaturan
+                        </span>
+                        <span id="pengaturan-arrow"
+                            class="transition-transform duration-300 {{ $pengaturanActive ? 'rotate-180' : '' }}">
+                            <i class="fa-solid fa-angle-down text-xs"></i>
+                        </span>
+                    </button>
 
-                {{-- DROPDOWN --}}
-                <div id="pengaturan-menu" class="space-y-1 {{ $pengaturanActive ? '' : 'hidden' }}">
+                    {{-- DROPDOWN --}}
+                    <div id="pengaturan-menu" class="space-y-1 {{ $pengaturanActive ? '' : 'hidden' }}">
 
-                    @can('management-workspaces.view')
-                        <a href="{{ route('managementworkspaces.index') }}"
-                        class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
+                        @can('management-workspaces.view')
+                            <a href="{{ route('managementworkspaces.index') }}"
+                                class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('managementworkspaces.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
-                        style="{{ request()->routeIs('managementworkspaces.*') ? 'background-color: #0096c7' : '' }}">
-                        <span class="w-5 flex justify-center ml-6">
-                            <span
-                                class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('managementworkspaces.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
-                        </span>
-                        <span class="font-medium">Management Workspaces</span>
-                        </a>
-                    @endcan
+                                style="{{ request()->routeIs('managementworkspaces.*') ? 'background-color: #0096c7' : '' }}">
+                                <span class="w-5 flex justify-center ml-6">
+                                    <span
+                                        class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('managementworkspaces.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
+                                </span>
+                                <span class="font-medium">Management Workspaces</span>
+                            </a>
+                        @endcan
 
-                    @can('management-projects.view')
-                        <a href="{{ route('managementprojects.index') }}"
-                        class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
+                        @can('management-projects.view')
+                            <a href="{{ route('managementprojects.index') }}"
+                                class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('managementprojects.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
-                        style="{{ request()->routeIs('managementprojects.*') ? 'background-color: #0096c7' : '' }}">
-                        <span class="w-5 flex justify-center ml-6">
-                            <span
-                                class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('managementprojects.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
-                        </span>
-                        <span class="font-medium">Management Projects</span>
-                        </a>
-                    @endcan
+                                style="{{ request()->routeIs('managementprojects.*') ? 'background-color: #0096c7' : '' }}">
+                                <span class="w-5 flex justify-center ml-6">
+                                    <span
+                                        class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('managementprojects.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
+                                </span>
+                                <span class="font-medium">Management Projects</span>
+                            </a>
+                        @endcan
 
-                    @can('management-users.view')
-                        <a href="{{ route('management-users.index') }}"
-                        class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
+                        @can('management-users.view')
+                            <a href="{{ route('management-users.index') }}"
+                                class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('management-users.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
-                        style="{{ request()->routeIs('management-users.*') ? 'background-color: #0096c7' : '' }}">
-                        <span class="w-5 flex justify-center ml-6">
-                            <span
-                                class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('management-users.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
-                        </span>
-                        <span class="font-medium">Management Users</span>
-                        </a>
-                    @endcan
+                                style="{{ request()->routeIs('management-users.*') ? 'background-color: #0096c7' : '' }}">
+                                <span class="w-5 flex justify-center ml-6">
+                                    <span
+                                        class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('management-users.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
+                                </span>
+                                <span class="font-medium">Management Users</span>
+                            </a>
+                        @endcan
 
-                    @canany(['roles.view', 'permissions.view'])
-                        <a href="{{ auth()->user()->can('roles.view') ? route('management-roles.index') : route('management-permissions.index') }}"
-                        class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
+                        @canany(['roles.view', 'permissions.view'])
+                            <a href="{{ auth()->user()->can('roles.view') ? route('management-roles.index') : route('management-permissions.index') }}"
+                                class="flex items-center gap-3 pl-8 py-2.5 rounded-xl transition-all duration-200 text-sm
             {{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'text-white shadow-lg' : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
-                        style="{{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'background-color: #0096c7' : '' }}">
-                        <span class="w-5 flex justify-center ml-6">
-                            <span
-                                class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
-                        </span>
-                        <span class="font-medium">Role &amp; Permissions</span>
-                        </a>
-                    @endcanany
-                </div>
-            </nav>
+                                style="{{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'background-color: #0096c7' : '' }}">
+                                <span class="w-5 flex justify-center ml-6">
+                                    <span
+                                        class="w-1.5 h-1.5 rounded-full {{ request()->routeIs('management-roles.*', 'management-permissions.*') ? 'bg-white' : 'bg-gray-400' }}"></span>
+                                </span>
+                                <span class="font-medium">Role &amp; Permissions</span>
+                            </a>
+                        @endcanany
+                    </div>
+                </nav>
             @endcanany
         @endif
 

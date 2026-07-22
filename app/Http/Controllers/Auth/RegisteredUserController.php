@@ -8,6 +8,7 @@ use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
 use Illuminate\View\View;
@@ -31,20 +32,27 @@ class RegisteredUserController extends Controller
     {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:' . User::class],
+            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
             'job_title' => ['nullable', 'string', 'max:255'],
             'department' => ['nullable', 'string', 'max:255'],
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
         ]);
 
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'job_title' => $request->job_title,
-            'department' => $request->department,
-            'password' => Hash::make($request->password),
-            'has_password' => true,
-        ]);
+        $user = DB::transaction(function () use ($request): User {
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'job_title' => $request->job_title,
+                'department' => $request->department,
+                'password' => Hash::make($request->password),
+                'has_password' => true,
+                'role' => 'member',
+            ]);
+
+            $user->syncRoles(['member']);
+
+            return $user;
+        });
 
         event(new Registered($user));
 

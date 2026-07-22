@@ -31,6 +31,7 @@ class PermissionManagementController extends Controller
     public function index(Request $request): View
     {
         Gate::authorize('permissions.view');
+        // Permission mengatur route/UI; pengelolaan permission tetap khusus super admin.
         abort_unless($request->user()->isSuperAdmin(), 403);
 
         $groups = Permission::query()
@@ -65,6 +66,7 @@ class PermissionManagementController extends Controller
     public function create(): View
     {
         Gate::authorize('permissions.create');
+        // Permission mengatur route/UI; mutation permission tetap khusus super admin.
         abort_unless(request()->user()->isSuperAdmin(), 403);
 
         return view('managementpermissions.create', [
@@ -75,6 +77,7 @@ class PermissionManagementController extends Controller
     public function store(Request $request): RedirectResponse
     {
         Gate::authorize('permissions.create');
+        // Permission mengatur route/UI; mutation permission tetap khusus super admin.
         abort_unless($request->user()->isSuperAdmin(), 403);
 
         $validated = $request->validate([

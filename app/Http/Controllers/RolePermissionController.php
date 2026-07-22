@@ -103,6 +103,7 @@ class RolePermissionController extends Controller
     public function create(): View
     {
         Gate::authorize('roles.create');
+        // Permission mengatur route/UI; mutation role tetap khusus super admin.
         abort_unless(request()->user()->isSuperAdmin(), 403);
 
         $permissions = Permission::query()
@@ -117,6 +118,7 @@ class RolePermissionController extends Controller
     public function store(Request $request): RedirectResponse
     {
         Gate::authorize('roles.create');
+        // Permission mengatur route/UI; mutation role tetap khusus super admin.
         abort_unless($request->user()->isSuperAdmin(), 403);
 
         $request->merge([
@@ -173,6 +175,7 @@ class RolePermissionController extends Controller
     public function update(Request $request, Role $role): RedirectResponse
     {
         Gate::authorize('roles.update');
+        // Permission mengatur route/UI; mutation role tetap khusus super admin.
         abort_unless($request->user()->isSuperAdmin(), 403);
         $this->ensureWebRole($role);
         abort_if($role->name === 'super_admin', 403, 'Permission Super Admin tidak dapat diubah.');

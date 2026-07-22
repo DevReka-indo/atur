@@ -5,9 +5,9 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Laravel\Socialite\Facades\Socialite;
-
+use Spatie\Permission\Models\Role;
 
 class GoogleAuthController extends Controller
 {
@@ -35,36 +35,48 @@ class GoogleAuthController extends Controller
             $user = User::where('google_id', $googleUser->id)->first();
 
             if ($user) {
-                if (!$user->is_active) {
+                if (! $user->is_active) {
                     return redirect()->route('login')
                         ->with('error', 'Akun Anda tidak aktif.');
                 }
 
+                DB::transaction(function () use ($user): void {
+                    $this->synchronizeMissingGlobalRole($user);
+                });
                 Auth::login($user);
             } else {
                 $existingUser = User::where('email', $googleUser->email)->first();
 
                 if ($existingUser) {
-                    if (!$existingUser->is_active) {
+                    if (! $existingUser->is_active) {
                         return redirect()->route('login')
                             ->with('error', 'Akun Anda tidak aktif.');
                     }
 
-                    $existingUser->update([
-                        'google_id' => $googleUser->id,
-                        'avatar_url' => $googleUser->avatar,
-                    ]);
+                    DB::transaction(function () use ($existingUser, $googleUser): void {
+                        $existingUser->update([
+                            'google_id' => $googleUser->id,
+                            'avatar_url' => $googleUser->avatar,
+                        ]);
+                        $this->synchronizeMissingGlobalRole($existingUser);
+                    });
                     Auth::login($existingUser);
                 } else {
-                    $newUser = User::create([
-                        'name'              => $googleUser->name,
-                        'email'             => $googleUser->email,
-                        'google_id'         => $googleUser->id,
-                        'avatar_url'        => $googleUser->avatar,
-                        'email_verified_at' => now(),
-                        'password'          => null,
-                        'has_password'      => false,
-                    ]);
+                    $newUser = DB::transaction(function () use ($googleUser): User {
+                        $newUser = User::create([
+                            'name' => $googleUser->name,
+                            'email' => $googleUser->email,
+                            'google_id' => $googleUser->id,
+                            'avatar_url' => $googleUser->avatar,
+                            'email_verified_at' => now(),
+                            'password' => null,
+                            'has_password' => false,
+                            'role' => 'member',
+                        ]);
+                        $newUser->syncRoles(['member']);
+
+                        return $newUser;
+                    });
                     Auth::login($newUser);
                 }
             }
@@ -79,5 +91,27 @@ class GoogleAuthController extends Controller
             return redirect()->route('login')
                 ->with('error', 'Gagal login dengan Google. Silakan coba lagi.');
         }
+    }
+
+    private function synchronizeMissingGlobalRole(User $user): void
+    {
+        if ($user->roles()->where('guard_name', 'web')->exists()) {
+            return;
+        }
+
+        $legacyRole = trim((string) $user->role);
+        $roleName = Role::query()
+            ->where('name', $legacyRole)
+            ->where('guard_name', 'web')
+            ->exists()
+                ? $legacyRole
+                : 'member';
+
+        if ($user->role !== $roleName) {
+            $user->role = $roleName;
+            $user->save();
+        }
+
+        $user->syncRoles([$roleName]);
     }
 }

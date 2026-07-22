@@ -15,7 +15,11 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        Gate::before(fn (User $user): ?bool => $user->isSuperAdmin() ? true : null);
+        Gate::before(function (User $user): ?bool {
+            return $user->hasRole('super_admin')
+                ? true
+                : null;
+        });
 
         View::composer('*', function ($view) {
 

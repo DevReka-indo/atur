@@ -17,195 +17,528 @@ use App\Http\Controllers\WorkspaceController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])->name('google.login');
-Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
+/*
+|--------------------------------------------------------------------------
+| Public Routes
+|--------------------------------------------------------------------------
+*/
 
-// SSO
-Route::middleware('guest')->group(function () {
-    Route::get('/login/sso', SsoLoginController::class)->name('sso.login');
-    Route::get('/sso/redirect', SsoRedirectController::class)->name('sso.redirect');
-});
-Route::get('/sso/callback', SsoCallbackController::class)->name('sso.callback');
-
-// Welcome
-// Route::get('/', fn() => view('welcome'));
+// Root
 Route::get('/', function () {
     if (Auth::check()) {
         return redirect()->route('dashboard');
     }
 
     return view('auth.login');
-});
+})->name('home');
 
-// Invitation
-Route::get('/invitations/accept/{token}', [InvitationController::class, 'accept'])->name('invitations.accept');
-Route::post('/invitations/store-session', [InvitationController::class, 'storeSession'])->name('invitations.store-session');
-Route::get('/join/{token}', [InvitationController::class, 'joinViaLink'])->name('workspaces.invite.join');
+/*
+|--------------------------------------------------------------------------
+| Google Authentication
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])
+    ->name('google.login');
+
+Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])
+    ->name('google.callback');
+
+/*
+|--------------------------------------------------------------------------
+| Single Sign-On
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/login/sso', SsoLoginController::class)
+    ->middleware('guest')
+    ->name('sso.login');
+
+Route::get('/sso/redirect', SsoRedirectController::class)
+    ->middleware('guest')
+    ->name('sso.redirect');
+
+Route::get('/sso/callback', SsoCallbackController::class)
+    ->name('sso.callback');
+
+/*
+|--------------------------------------------------------------------------
+| Public Invitations
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/invitations/accept/{token}', [InvitationController::class, 'accept'])
+    ->name('invitations.accept');
+
+Route::post('/invitations/store-session', [InvitationController::class, 'storeSession'])
+    ->name('invitations.store-session');
+
+Route::get('/join/{token}', [InvitationController::class, 'joinViaLink'])
+    ->name('workspaces.invite.join');
+
+/*
+|--------------------------------------------------------------------------
+| Authenticated Routes
+|--------------------------------------------------------------------------
+*/
 
 Route::middleware('auth')->group(function () {
-    // Dashboard
-    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
-    Route::get('/live-search', [DashboardController::class, 'live'])->name('live.search');
-    Route::post('/switch-account/{id}', [DashboardController::class, 'switchAccount'])->name('switch.account');
-    Route::delete('/settings/account/remove/{id}', [DashboardController::class, 'removeAccountFromDevice'])->name('account.remove.device');
-    Route::get('/settings/account', [DashboardController::class, 'account'])->name('settings.account');
-    Route::get('/settings/about', [DashboardController::class, 'about'])->name('settings.about');
 
-    // notif
-    Route::get('/settings/notifications', [DashboardController::class, 'notifications'])->name('notifications.index');
-    Route::get('/notifications/poll', [DashboardController::class, 'poll'])->name('notifications.poll');
-    Route::post('/notifications/read-all', [DashboardController::class, 'markAllAsRead'])->name('notifications.readAll');
-    Route::post('/notifications/{id}/read', [DashboardController::class, 'markAsRead'])->name('notifications.read');
-    Route::delete('/notifications/{id}', [DashboardController::class, 'destroy'])->name('notifications.destroy');
+    /*
+    |--------------------------------------------------------------------------
+    | Dashboard
+    |--------------------------------------------------------------------------
+    */
 
-    // activity log
-    Route::get('/activity-log', [DashboardController::class, 'activityLog'])->name('activity.log');
+    Route::get('/dashboard', [DashboardController::class, 'index'])
+        ->name('dashboard');
 
-    // overload
-    Route::get('/overload', [DashboardController::class, 'overloadList'])->name('overload.index');
+    Route::get('/live-search', [DashboardController::class, 'live'])
+        ->name('live.search');
 
-    // Workspaces
-    Route::get('/workspaces', [WorkspaceController::class, 'index'])->name('workspaces.index');
+    Route::get('/activity-log', [DashboardController::class, 'activityLog'])
+        ->name('activity.log');
 
-    // Route::resource('workspaces.issues', WorkspaceController::class);
-    Route::get('/workspaces/create', [WorkspaceController::class, 'create'])->name('workspaces.create');
-    Route::post('/workspaces', [WorkspaceController::class, 'store'])->name('workspaces.store');
-    Route::get('/workspaces/{token}', [WorkspaceController::class, 'show'])->name('workspaces.show');
-    Route::get('/workspaces/{token}/edit', [WorkspaceController::class, 'edit'])->name('workspaces.edit');
-    Route::put('/workspaces/{token}', [WorkspaceController::class, 'update'])->name('workspaces.update');
-    Route::patch('/workspaces/{token}', [WorkspaceController::class, 'update']);
-    Route::delete('/workspaces/{token}', [WorkspaceController::class, 'destroy'])->name('workspaces.destroy');
-    Route::delete('/workspaces/{token}/members/{user}/cascade', [WorkspaceController::class, 'removeMemberCascade'])->name('workspaces.members.destroy.cascade');
+    Route::get('/overload', [DashboardController::class, 'overloadList'])
+        ->name('overload.index');
 
-    // Workspace members
-    Route::post('/workspaces/{token}/members', [WorkspaceController::class, 'addMember'])->name('workspaces.members.store');
-    Route::patch('/workspaces/{token}/members/{user}', [WorkspaceController::class, 'updateMemberRole'])->name('workspaces.members.update');
-    Route::delete('/workspaces/{token}/members/{user}', [WorkspaceController::class, 'removeMember'])->name('workspaces.members.destroy');
+    /*
+    |--------------------------------------------------------------------------
+    | Account Settings
+    |--------------------------------------------------------------------------
+    */
 
-    // Workspace invite link
-    Route::post('/workspaces/{token}/invite-link/generate', [WorkspaceController::class, 'generateInviteLink'])->name('workspaces.invite.generate');
-    Route::post('/workspaces/{token}/invite-link/reset', [WorkspaceController::class, 'resetInviteLink'])->name('workspaces.invite.reset');
-    Route::post('/workspaces/{token}/invite-link/accept', [InvitationController::class, 'acceptViaLink'])->name('workspaces.invite.accept');
-    Route::post('/workspaces/{token}/invite-link/decline', [InvitationController::class, 'declineViaLink'])->name('workspaces.invite.decline');
+    Route::get('/settings/account', [DashboardController::class, 'account'])
+        ->name('settings.account');
 
-    // Projects
-    Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
-    Route::get('/projects/create', [ProjectController::class, 'create'])->name('projects.create');
-    Route::post('/projects', [ProjectController::class, 'store'])->name('projects.store');
-    Route::get('/projects/{token}', [ProjectController::class, 'show'])->name('projects.show');
-    Route::get('/projects/{token}/edit', [ProjectController::class, 'edit'])->name('projects.edit');
-    Route::put('/projects/{token}', [ProjectController::class, 'update'])->name('projects.update');
+    Route::get('/settings/about', [DashboardController::class, 'about'])
+        ->name('settings.about');
 
-    // Route::patch('/projects/{token}', [ProjectController::class, 'update']);
-    Route::delete('/projects/{token}', [ProjectController::class, 'destroy'])->name('projects.destroy');
-    Route::get('/gantt/project-data', [ProjectController::class, 'ganttData'])->name('gantt.project.data');
+    Route::post('/switch-account/{id}', [DashboardController::class, 'switchAccount'])
+        ->name('switch.account');
 
-    // Project members
-    Route::post('/projects/{token}/members', [ProjectController::class, 'addMember'])->name('projects.members.store');
-    Route::patch('/projects/{token}/members/{user}', [ProjectController::class, 'updateMemberRole'])->name('projects.members.update');
-    Route::delete('/projects/{token}/members/{user}', [ProjectController::class, 'removeMember'])->name('projects.members.destroy');
-    Route::patch('/projects/{token}/status', [ProjectController::class, 'updateStatus'])->name('projects.updateStatus');
+    Route::delete('/settings/account/remove/{id}', [DashboardController::class, 'removeAccountFromDevice'])
+        ->name('account.remove.device');
 
-    // Tasks
-    Route::get('/tasks', [TaskController::class, 'index'])->name('tasks.index');
-    Route::get('/tasks/create', [TaskController::class, 'create'])->name('tasks.create');
-    Route::post('/tasks', [TaskController::class, 'store'])->name('tasks.store');
-    Route::get('/tasks/{token}', [TaskController::class, 'show'])->name('tasks.show');
-    Route::get('/tasks/{token}/edit', [TaskController::class, 'edit'])->name('tasks.edit');
-    Route::put('/tasks/{token}', [TaskController::class, 'update'])->name('tasks.update');
-    Route::patch('/tasks/{token}', [TaskController::class, 'update']);
-    Route::delete('/tasks/{token}', [TaskController::class, 'destroy'])->name('tasks.destroy');
-    Route::get('/projects/{id}/tasks-json', [TaskController::class, 'tasksJson'])->name('projects.tasks.json');
-    // Task action
-    Route::post('/tasks/{token}/comments', [TaskController::class, 'storeComment'])->name('tasks.comments.store');
-    Route::post('/tasks/{token}/attachments', [TaskController::class, 'storeAttachment'])->name('tasks.attachments.store');
-    Route::get('/tasks/{token}/attachments/{attachment}/download', [TaskController::class, 'downloadAttachment'])->name('tasks.attachments.download');
-    Route::patch('/tasks/{token}/status', [TaskController::class, 'updateStatus'])->name('tasks.updateStatus');
-    Route::get('/gantt/data', [TaskController::class, 'ganttData'])->name('gant.data');
-    Route::get('/projects/{id}/assignees-json', [TaskController::class, 'assigneesJson']);
-    Route::post('/tasks/{token}/mark-seen', [TaskController::class, 'markSeen'])->name('tasks.markSeen');
+    /*
+    |--------------------------------------------------------------------------
+    | Notifications
+    |--------------------------------------------------------------------------
+    */
 
-    // Management
-    Route::resource('management-users', UserController::class)
-        ->middlewareFor(['index', 'show'], 'permission:management-users.view')
-        ->middlewareFor(['create', 'store'], 'permission:management-users.create')
-        ->middlewareFor(['edit', 'update'], 'permission:management-users.update')
-        ->middlewareFor('destroy', 'permission:management-users.delete');
-    Route::patch('management-users/{management_user}/toggle-status', [UserController::class, 'toggleStatus'])
+    Route::get('/settings/notifications', [DashboardController::class, 'notifications'])
+        ->name('notifications.index');
+
+    Route::get('/notifications/poll', [DashboardController::class, 'poll'])
+        ->name('notifications.poll');
+
+    Route::post('/notifications/read-all', [DashboardController::class, 'markAllAsRead'])
+        ->name('notifications.readAll');
+
+    Route::post('/notifications/{id}/read', [DashboardController::class, 'markAsRead'])
+        ->name('notifications.read');
+
+    Route::delete('/notifications/{id}', [DashboardController::class, 'destroy'])
+        ->name('notifications.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workspaces
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/workspaces', [WorkspaceController::class, 'index'])
+        ->name('workspaces.index');
+
+    Route::get('/workspaces/create', [WorkspaceController::class, 'create'])
+        ->name('workspaces.create');
+
+    Route::post('/workspaces', [WorkspaceController::class, 'store'])
+        ->name('workspaces.store');
+
+    Route::get('/workspaces/{token}', [WorkspaceController::class, 'show'])
+        ->name('workspaces.show');
+
+    Route::get('/workspaces/{token}/edit', [WorkspaceController::class, 'edit'])
+        ->name('workspaces.edit');
+
+    Route::put('/workspaces/{token}', [WorkspaceController::class, 'update'])
+        ->name('workspaces.update');
+
+    Route::patch('/workspaces/{token}', [WorkspaceController::class, 'update'])
+        ->name('workspaces.patch-update');
+
+    Route::delete('/workspaces/{token}', [WorkspaceController::class, 'destroy'])
+        ->name('workspaces.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workspace Members
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/workspaces/{token}/members', [WorkspaceController::class, 'addMember'])
+        ->name('workspaces.members.store');
+
+    Route::patch('/workspaces/{token}/members/{user}', [WorkspaceController::class, 'updateMemberRole'])
+        ->name('workspaces.members.update');
+
+    Route::delete('/workspaces/{token}/members/{user}', [WorkspaceController::class, 'removeMember'])
+        ->name('workspaces.members.destroy');
+
+    Route::delete('/workspaces/{token}/members/{user}/cascade', [WorkspaceController::class, 'removeMemberCascade'])
+        ->name('workspaces.members.destroy.cascade');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workspace Invite Links
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/workspaces/{token}/invite-link/generate', [WorkspaceController::class, 'generateInviteLink'])
+        ->name('workspaces.invite.generate');
+
+    Route::post('/workspaces/{token}/invite-link/reset', [WorkspaceController::class, 'resetInviteLink'])
+        ->name('workspaces.invite.reset');
+
+    Route::post('/workspaces/{token}/invite-link/accept', [InvitationController::class, 'acceptViaLink'])
+        ->name('workspaces.invite.accept');
+
+    Route::post('/workspaces/{token}/invite-link/decline', [InvitationController::class, 'declineViaLink'])
+        ->name('workspaces.invite.decline');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Projects
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/projects', [ProjectController::class, 'index'])
+        ->name('projects.index');
+
+    Route::get('/projects/create', [ProjectController::class, 'create'])
+        ->name('projects.create');
+
+    Route::post('/projects', [ProjectController::class, 'store'])
+        ->name('projects.store');
+
+    Route::get('/projects/{token}', [ProjectController::class, 'show'])
+        ->name('projects.show');
+
+    Route::get('/projects/{token}/edit', [ProjectController::class, 'edit'])
+        ->name('projects.edit');
+
+    Route::put('/projects/{token}', [ProjectController::class, 'update'])
+        ->name('projects.update');
+
+    Route::delete('/projects/{token}', [ProjectController::class, 'destroy'])
+        ->name('projects.destroy');
+
+    Route::patch('/projects/{token}/status', [ProjectController::class, 'updateStatus'])
+        ->name('projects.updateStatus');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Project Members
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/projects/{token}/members', [ProjectController::class, 'addMember'])
+        ->name('projects.members.store');
+
+    Route::patch('/projects/{token}/members/{user}', [ProjectController::class, 'updateMemberRole'])
+        ->name('projects.members.update');
+
+    Route::delete('/projects/{token}/members/{user}', [ProjectController::class, 'removeMember'])
+        ->name('projects.members.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Project Data
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/projects/{id}/tasks-json', [TaskController::class, 'tasksJson'])
+        ->name('projects.tasks.json');
+
+    Route::get('/projects/{id}/assignees-json', [TaskController::class, 'assigneesJson'])
+        ->name('projects.assignees.json');
+
+    Route::get('/gantt/project-data', [ProjectController::class, 'ganttData'])
+        ->name('gantt.project.data');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Tasks
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/tasks', [TaskController::class, 'index'])
+        ->name('tasks.index');
+
+    Route::get('/tasks/create', [TaskController::class, 'create'])
+        ->name('tasks.create');
+
+    Route::post('/tasks', [TaskController::class, 'store'])
+        ->name('tasks.store');
+
+    Route::get('/tasks/{token}', [TaskController::class, 'show'])
+        ->name('tasks.show');
+
+    Route::get('/tasks/{token}/edit', [TaskController::class, 'edit'])
+        ->name('tasks.edit');
+
+    Route::put('/tasks/{token}', [TaskController::class, 'update'])
+        ->name('tasks.update');
+
+    Route::patch('/tasks/{token}', [TaskController::class, 'update'])
+        ->name('tasks.patch-update');
+
+    Route::delete('/tasks/{token}', [TaskController::class, 'destroy'])
+        ->name('tasks.destroy');
+
+    Route::patch('/tasks/{token}/status', [TaskController::class, 'updateStatus'])
+        ->name('tasks.updateStatus');
+
+    Route::post('/tasks/{token}/mark-seen', [TaskController::class, 'markSeen'])
+        ->name('tasks.markSeen');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Task Comments and Attachments
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/tasks/{token}/comments', [TaskController::class, 'storeComment'])
+        ->name('tasks.comments.store');
+
+    Route::post('/tasks/{token}/attachments', [TaskController::class, 'storeAttachment'])
+        ->name('tasks.attachments.store');
+
+    Route::get('/tasks/{token}/attachments/{attachment}/download', [TaskController::class, 'downloadAttachment'])
+        ->name('tasks.attachments.download');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Task Gantt Data
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/gantt/data', [TaskController::class, 'ganttData'])
+        ->name('gant.data');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Management Users
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/management-users', [UserController::class, 'index'])
+        ->middleware('permission:management-users.view')
+        ->name('management-users.index');
+
+    Route::get('/management-users/create', [UserController::class, 'create'])
+        ->middleware('permission:management-users.create')
+        ->name('management-users.create');
+
+    Route::post('/management-users', [UserController::class, 'store'])
+        ->middleware('permission:management-users.create')
+        ->name('management-users.store');
+
+    Route::get('/management-users/{management_user}', [UserController::class, 'show'])
+        ->middleware('permission:management-users.view')
+        ->name('management-users.show');
+
+    Route::get('/management-users/{management_user}/edit', [UserController::class, 'edit'])
+        ->middleware('permission:management-users.update')
+        ->name('management-users.edit');
+
+    Route::put('/management-users/{management_user}', [UserController::class, 'update'])
+        ->middleware('permission:management-users.update')
+        ->name('management-users.update');
+
+    Route::delete('/management-users/{management_user}', [UserController::class, 'destroy'])
+        ->middleware('permission:management-users.delete')
+        ->name('management-users.destroy');
+
+    Route::patch('/management-users/{management_user}/toggle-status', [UserController::class, 'toggleStatus'])
         ->middleware('permission:management-users.toggle-status')
         ->name('management-users.toggle-status');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Management Projects
+    |--------------------------------------------------------------------------
+    */
+
     Route::get('/management-projects', [ProjectController::class, 'managementIndex'])
         ->middleware('permission:management-projects.view')
         ->name('managementprojects.index');
+
     Route::delete('/management-projects/{token}', [ProjectController::class, 'managementDestroy'])
         ->middleware('permission:management-projects.delete')
         ->name('managementprojects.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Management Workspaces
+    |--------------------------------------------------------------------------
+    */
+
     Route::get('/management-workspaces', [WorkspaceController::class, 'managementIndex'])
         ->middleware('permission:management-workspaces.view')
         ->name('managementworkspaces.index');
+
     Route::delete('/management-workspaces/{token}', [WorkspaceController::class, 'managementDestroy'])
         ->middleware('permission:management-workspaces.delete')
         ->name('managementworkspaces.destroy');
-    Route::prefix('management-roles')->name('management-roles.')->group(function () {
-        Route::get('/', [RolePermissionController::class, 'index'])
-            ->middleware('permission:roles.view')
-            ->name('index');
-        Route::get('/create', [RolePermissionController::class, 'create'])
-            ->middleware('permission:roles.create')
-            ->name('create');
-        Route::post('/', [RolePermissionController::class, 'store'])
-            ->middleware('permission:roles.create')
-            ->name('store');
-        Route::get('/{role}/edit', [RolePermissionController::class, 'edit'])
-            ->middleware('permission:roles.view')
-            ->name('edit');
-        Route::put('/{role}', [RolePermissionController::class, 'update'])
-            ->middleware('permission:roles.update')
-            ->name('update');
-    });
-    Route::prefix('management-permissions')->name('management-permissions.')->group(function () {
-        Route::get('/', [PermissionManagementController::class, 'index'])
-            ->middleware('permission:permissions.view')
-            ->name('index');
-        Route::get('/create', [PermissionManagementController::class, 'create'])
-            ->middleware('permission:permissions.create')
-            ->name('create');
-        Route::post('/', [PermissionManagementController::class, 'store'])
-            ->middleware('permission:permissions.create')
-            ->name('store');
-    });
 
-    // Discussion
-    Route::get('/discussion', [DiscussionController::class, 'index'])->name('discussion.index');
-    Route::get('/discussion/unread-sidebar', [DiscussionController::class, 'unreadSidebar'])->name('discussion.unread-sidebar');
-    Route::get('/discussion/{project}/unread', [DiscussionController::class, 'unreadCounts'])->name('discussion.unread');
-    Route::get('/discussion/{project}/unread-counts', [DiscussionController::class, 'unreadCounts'])->name('discussion.unread-counts');
-    Route::get('/discussion/{project}', [DiscussionController::class, 'show'])->name('discussion.show');
-    Route::post('/discussion/{project}/threads', [DiscussionController::class, 'storeThread'])->name('discussion.threads.store');
-    Route::patch('/discussion/{project}/threads/{thread}', [DiscussionController::class, 'updateThread'])->name('discussion.threads.update');
-    Route::delete('/discussion/{project}/threads/{thread}', [DiscussionController::class, 'destroyThread'])->name('discussion.threads.destroy');
-    Route::get('/discussion/{project}/{thread}', [DiscussionController::class, 'chat'])->name('discussion.chat');
-    Route::post('/discussion/{project}/{thread}/messages', [DiscussionController::class, 'storeMessage']);
-    Route::post('/discussion/{project}/thread/{thread}/messages', [DiscussionController::class, 'storeMessage'])->name('messages.store');
-    Route::patch('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'updateMessage'])->name('messages.update');
-    Route::delete('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'destroyMessage'])->name('messages.destroy');
+    /*
+    |--------------------------------------------------------------------------
+    | Management Roles
+    |--------------------------------------------------------------------------
+    */
 
-    // Profile
-    Route::prefix('profile')
-        ->name('profile.')
-        ->group(function () {
-            Route::get('/', [ProfileController::class, 'edit'])->name('edit');
-            Route::patch('/', [ProfileController::class, 'update'])->name('update');
-            Route::delete('/', [ProfileController::class, 'destroy'])->name('destroy');
-            Route::post('/photo', [ProfileController::class, 'updatePhoto'])->name('photo.update');
-            Route::delete('/photo', [ProfileController::class, 'deletePhoto'])->name('photo.delete');
-        });
+    Route::get('/management-roles', [RolePermissionController::class, 'index'])
+        ->middleware('permission:roles.view')
+        ->name('management-roles.index');
 
-    // Invitations
-    Route::post('/invitations/send', [InvitationController::class, 'send'])->name('invitations.send');
-    Route::post('/invitations/join', [InvitationController::class, 'join'])->name('invitations.join');
-    Route::post('/invitations/reject', [InvitationController::class, 'reject'])->name('invitations.reject');
-    Route::post('/invitations/decline', [InvitationController::class, 'decline'])->name('invitations.decline');
+    Route::get('/management-roles/create', [RolePermissionController::class, 'create'])
+        ->middleware('permission:roles.create')
+        ->name('management-roles.create');
+
+    Route::post('/management-roles', [RolePermissionController::class, 'store'])
+        ->middleware('permission:roles.create')
+        ->name('management-roles.store');
+
+    Route::get('/management-roles/{role}/edit', [RolePermissionController::class, 'edit'])
+        ->middleware('permission:roles.view')
+        ->name('management-roles.edit');
+
+    Route::put('/management-roles/{role}', [RolePermissionController::class, 'update'])
+        ->middleware('permission:roles.update')
+        ->name('management-roles.update');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Management Permissions
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/management-permissions', [PermissionManagementController::class, 'index'])
+        ->middleware('permission:permissions.view')
+        ->name('management-permissions.index');
+
+    Route::get('/management-permissions/create', [PermissionManagementController::class, 'create'])
+        ->middleware('permission:permissions.create')
+        ->name('management-permissions.create');
+
+    Route::post('/management-permissions', [PermissionManagementController::class, 'store'])
+        ->middleware('permission:permissions.create')
+        ->name('management-permissions.store');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Discussion
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/discussion', [DiscussionController::class, 'index'])
+        ->name('discussion.index');
+
+    /*
+     * Route statis harus berada sebelum route /discussion/{project}.
+     */
+    Route::get('/discussion/unread-sidebar', [DiscussionController::class, 'unreadSidebar'])
+        ->name('discussion.unread-sidebar');
+
+    Route::get('/discussion/{project}/unread', [DiscussionController::class, 'unreadCounts'])
+        ->name('discussion.unread');
+
+    Route::get('/discussion/{project}/unread-counts', [DiscussionController::class, 'unreadCounts'])
+        ->name('discussion.unread-counts');
+
+    Route::post('/discussion/{project}/threads', [DiscussionController::class, 'storeThread'])
+        ->name('discussion.threads.store');
+
+    Route::patch('/discussion/{project}/threads/{thread}', [DiscussionController::class, 'updateThread'])
+        ->name('discussion.threads.update');
+
+    Route::delete('/discussion/{project}/threads/{thread}', [DiscussionController::class, 'destroyThread'])
+        ->name('discussion.threads.destroy');
+
+    Route::get('/discussion/{project}/{thread}', [DiscussionController::class, 'chat'])
+        ->name('discussion.chat');
+
+    /*
+     * Endpoint canonical penyimpanan pesan.
+     * Sebelumnya belum memiliki nama route.
+     */
+    Route::post('/discussion/{project}/{thread}/messages', [DiscussionController::class, 'storeMessage'])
+        ->name('discussion.messages.store');
+
+    /*
+     * Endpoint legacy tetap dipertahankan karena kemungkinan masih digunakan.
+     */
+    Route::post('/discussion/{project}/thread/{thread}/messages', [DiscussionController::class, 'storeMessage'])
+        ->name('messages.store');
+
+    Route::patch('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'updateMessage'])
+        ->name('messages.update');
+
+    Route::delete('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'destroyMessage'])
+        ->name('messages.destroy');
+
+    /*
+     * Route dinamis project diletakkan paling bawah.
+     */
+    Route::get('/discussion/{project}', [DiscussionController::class, 'show'])
+        ->name('discussion.show');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Profile
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/profile', [ProfileController::class, 'edit'])
+        ->name('profile.edit');
+
+    Route::patch('/profile', [ProfileController::class, 'update'])
+        ->name('profile.update');
+
+    Route::delete('/profile', [ProfileController::class, 'destroy'])
+        ->name('profile.destroy');
+
+    Route::post('/profile/photo', [ProfileController::class, 'updatePhoto'])
+        ->name('profile.photo.update');
+
+    Route::delete('/profile/photo', [ProfileController::class, 'deletePhoto'])
+        ->name('profile.photo.delete');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invitations
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/invitations/send', [InvitationController::class, 'send'])
+        ->name('invitations.send');
+
+    Route::post('/invitations/join', [InvitationController::class, 'join'])
+        ->name('invitations.join');
+
+    Route::post('/invitations/reject', [InvitationController::class, 'reject'])
+        ->name('invitations.reject');
+
+    Route::post('/invitations/decline', [InvitationController::class, 'decline'])
+        ->name('invitations.decline');
 });
+
+/*
+|--------------------------------------------------------------------------
+| Breeze Authentication Routes
+|--------------------------------------------------------------------------
+*/
 
 require __DIR__.'/auth.php';

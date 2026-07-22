@@ -25,7 +25,8 @@
                 <form method="GET" action="{{ route('management-users.index') }}" id="search-form"
                     class="flex-1 max-w-md">
                     <div class="relative">
-                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+                        <i
+                            class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
                         <input type="text" name="search" id="search-input" value="{{ $search ?? '' }}"
                             placeholder="Search name or email..." autocomplete="off"
                             class="pl-9 pr-4 py-2.5 w-full rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-all duration-200" />
@@ -33,8 +34,7 @@
                         {{-- AUTOCOMPLETE DROPDOWN --}}
                         <div id="autocomplete-list"
                             class="absolute z-50 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 hidden">
-                            <div
-                                class="px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider border-b">
+                            <div class="px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider border-b">
                                 Users</div>
                             <ul id="autocomplete-items" class="py-1 max-h-48 overflow-y-auto"></ul>
                         </div>
@@ -125,7 +125,8 @@
                                             <img src="{{ asset('storage/' . $user->profile_photo) }}"
                                                 class="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-gray-200">
                                         @else
-                                            <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                                            <div
+                                                class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
                                                 <span class="text-sm font-bold text-indigo-600">
                                                     {{ strtoupper(substr($user->name, 0, 1)) }}
                                                 </span>
@@ -135,9 +136,10 @@
                                     </div>
                                 </td>
 
-                                {{--Email --}}
+                                {{-- Email --}}
                                 <td class="px-6 py-4">
-                                    <span class="text-sm text-gray-600 truncate block max-w-[200px]" title="{{ $user->email }}">
+                                    <span class="text-sm text-gray-600 truncate block max-w-[200px]"
+                                        title="{{ $user->email }}">
                                         {{ $user->email }}
                                     </span>
                                 </td>
@@ -148,7 +150,8 @@
                                         $roles = [
                                             'super_admin' => [
                                                 'label' => 'Super Admin',
-                                                'class' => 'bg-gradient-to-r from-red-500 to-rose-600 text-white shadow shadow-red-200',
+                                                'class' =>
+                                                    'bg-gradient-to-r from-red-500 to-rose-600 text-white shadow shadow-red-200',
                                                 'icon' => 'fa-solid fa-crown',
                                             ],
                                             'member' => [
@@ -168,7 +171,8 @@
                                             'icon' => 'fa-solid fa-user-tag',
                                         ];
                                     @endphp
-                                    <span class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full {{ $role['class'] }}">
+                                    <span
+                                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full {{ $role['class'] }}">
                                         <i class="{{ $role['icon'] }} text-[11px]"></i>
                                         {{ $role['label'] }}
                                     </span>
@@ -191,17 +195,26 @@
                                 {{-- Created --}}
                                 <td class="px-6 py-4 text-gray-500">
                                     <div>{{ $user->created_at->format('d M Y') }}</div>
-                                    <div class="text-xs text-gray-400 mt-0.5">{{ $user->created_at->diffForHumans() }}</div>
+                                    <div class="text-xs text-gray-400 mt-0.5">{{ $user->created_at->diffForHumans() }}
+                                    </div>
                                 </td>
 
                                 {{-- Actions --}}
                                 <td class="px-6 py-4">
                                     <div class="flex justify-end items-center gap-2">
                                         @if ($user->id === Auth::id())
-                                            <span class="px-3 py-1 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-600">
+                                            <span
+                                                class="px-3 py-1 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-600">
                                                 You
                                             </span>
                                         @else
+                                            @can('management-users.view')
+                                                <a href="{{ route('management-users.show', $user) }}" title="Detail"
+                                                    class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-blue-500 transition-colors hover:bg-blue-50">
+                                                    <i class="fa-solid fa-eye"></i>
+                                                </a>
+                                            @endcan
+
                                             @can('management-users.update')
                                                 {{-- Edit --}}
                                                 <a href="{{ route('management-users.edit', $user) }}" title="Edit"
@@ -211,10 +224,12 @@
                                             @endcan
 
                                             @can('management-users.toggle-status')
-                                                <form method="POST" action="{{ route('management-users.toggle-status', $user) }}">
+                                                <form method="POST"
+                                                    action="{{ route('management-users.toggle-status', $user) }}">
                                                     @csrf
                                                     @method('PATCH')
-                                                    <button type="submit" title="{{ $user->is_active ? 'Deactivate' : 'Activate' }}"
+                                                    <button type="submit"
+                                                        title="{{ $user->is_active ? 'Deactivate' : 'Activate' }}"
                                                         class="inline-flex items-center justify-center w-8 h-8 rounded-lg {{ $user->is_active ? 'text-orange-500 hover:bg-orange-50' : 'text-emerald-500 hover:bg-emerald-50' }} transition-colors cursor-pointer">
                                                         <i class="fa-solid fa-power-off"></i>
                                                     </button>
@@ -249,7 +264,8 @@
                                     </div>
                                     <div class="text-sm mt-1">
                                         @if (!empty($search))
-                                            <a href="{{ route('management-users.index') }}" class="text-indigo-500 hover:underline">Reset search</a>
+                                            <a href="{{ route('management-users.index') }}"
+                                                class="text-indigo-500 hover:underline">Reset search</a>
                                         @else
                                             Try adding a new user
                                         @endif
