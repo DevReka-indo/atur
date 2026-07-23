@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\DiscussionController;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Tests\TestCase;
@@ -32,19 +33,57 @@ class DiscussionRouteTest extends TestCase
         );
     }
 
-    public function test_messages_store_generates_the_canonical_uri_and_keeps_the_legacy_alias(): void
+    public function test_canonical_message_store_route_has_the_expected_contract(): void
     {
         $this->assertSame(
-            '/discussion/123/thread/456/messages',
-            route('messages.store', ['project' => 123, 'thread' => 456], absolute: false)
+            '/discussion/123/456/messages',
+            route('discussion.messages.store', ['project' => 123, 'thread' => 456], absolute: false)
         );
 
-        $legacyRoute = $this->router()->getRoutes()->match(
+        $canonicalRoute = $this->router()->getRoutes()->match(
             Request::create('/discussion/123/456/messages', 'POST')
         );
 
+        $this->assertSame('discussion.messages.store', $canonicalRoute->getName());
+        $this->assertSame('discussion/{project}/{thread}/messages', $canonicalRoute->uri());
+        $this->assertSame(DiscussionController::class.'@storeMessage', $canonicalRoute->getActionName());
+        $this->assertContains('POST', $canonicalRoute->methods());
+    }
+
+    public function test_legacy_message_store_endpoint_remains_unnamed(): void
+    {
+        $legacyRoute = $this->router()->getRoutes()->match(
+            Request::create('/discussion/123/thread/456/messages', 'POST')
+        );
+
         $this->assertNull($legacyRoute->getName());
-        $this->assertSame('discussion/{project}/{thread}/messages', $legacyRoute->uri());
+        $this->assertSame('discussion/{project}/thread/{thread}/messages', $legacyRoute->uri());
+        $this->assertSame(DiscussionController::class.'@storeMessage', $legacyRoute->getActionName());
+        $this->assertContains('POST', $legacyRoute->methods());
+    }
+
+    public function test_canonical_message_store_route_name_is_unique(): void
+    {
+        $matchingRoutes = collect($this->router()->getRoutes()->getRoutes())
+            ->filter(fn ($route): bool => $route->getName() === 'discussion.messages.store');
+
+        $this->assertCount(1, $matchingRoutes);
+    }
+
+    public function test_chat_frontend_posts_messages_to_the_canonical_named_route(): void
+    {
+        $chatView = file_get_contents(resource_path('views/discussion/chat.blade.php'));
+
+        $this->assertIsString($chatView);
+        $this->assertStringContainsString("route('discussion.messages.store'", $chatView);
+        $this->assertStringContainsString('fetch(MESSAGE_STORE_URL', $chatView);
+        $this->assertStringNotContainsString('fetch(`/discussion/${PROJECT_ID}/thread/${THREAD_ID}/messages`,', $chatView);
+    }
+
+    public function test_discussion_index_and_show_routes_remain_available(): void
+    {
+        $this->assertSame('discussion.index', $this->matchedRouteName('/discussion'));
+        $this->assertSame('discussion.show', $this->matchedRouteName('/discussion/123'));
     }
 
     public function test_projects_tasks_json_is_registered_once(): void

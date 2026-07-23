@@ -577,10 +577,9 @@ Route::middleware('auth')->group(function () {
         ->name('discussion.messages.store');
 
     /*
-     * Endpoint legacy tetap dipertahankan karena kemungkinan masih digunakan.
+     * Endpoint legacy tetap dipertahankan tanpa mengambil nama route canonical.
      */
-    Route::post('/discussion/{project}/thread/{thread}/messages', [DiscussionController::class, 'storeMessage'])
-        ->name('messages.store');
+    Route::post('/discussion/{project}/thread/{thread}/messages', [DiscussionController::class, 'storeMessage']);
 
     Route::patch('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'updateMessage'])
         ->name('messages.update');

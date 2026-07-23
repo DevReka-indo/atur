@@ -164,7 +164,11 @@
                                 @endif
                                 {{-- GANTI dengan ini: --}}
                                 <span class="bubble-text text-sm leading-relaxed"
-                                    style="word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap; display: block;">{{ $message->content }}@if ($message->is_edited ?? false)<span class="text-xs text-gray-400 italic"> diedit</span>@endif<span style="display: inline-block; width: 48px;"> </span></span>
+                                    style="word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap; display: block;">{{ $message->content }}
+                                    @if ($message->is_edited ?? false)
+                                        <span class="text-xs text-gray-400 italic"> diedit</span>
+                                    @endif
+                                    <span style="display: inline-block; width: 48px;"> </span></span>
                                 <span class="{{ $isMe ? 'text-green-600' : 'text-gray-400' }} text-xs whitespace-nowrap"
                                     style="float: right; margin-top: -1.2rem; line-height: 1.6;">{{ $message->created_at->format('H:i') }}</span>
                                 @if ($isMe)
@@ -300,6 +304,16 @@
     </style>
 @endsection
 
+@php
+    $messageStoreUrl = route(
+        'discussion.messages.store',
+        [
+            'project' => $project,
+            'thread' => $thread,
+        ],
+        false,
+    );
+@endphp
 @push('scripts')
     <script>
         (function() {
@@ -312,8 +326,9 @@
 
         document.addEventListener('DOMContentLoaded', function() {
 
-            const PROJECT_ID = {{ $project->id }};
-            const THREAD_ID = {{ $thread->id }};
+            const PROJECT_ID = @json($project->id);
+            const THREAD_ID = @json($thread->id);
+            const MESSAGE_STORE_URL = @json($messageStoreUrl);
             const CSRF = document.querySelector('meta[name="csrf-token"]').content;
 
             const container = document.getElementById('chat-container');
@@ -401,7 +416,7 @@
                         cancelEditMode();
 
                     } else {
-                        const resp = await fetch(`/discussion/${PROJECT_ID}/thread/${THREAD_ID}/messages`, {
+                        const resp = await fetch(MESSAGE_STORE_URL, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
