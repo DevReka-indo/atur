@@ -44,6 +44,14 @@
                 Lihat Detail
             </a>
             <a href="{{ route('projects.create', ['project_template_id' => $template->id]) }}"
+                data-use-template
+                data-template-id="{{ $template->id }}"
+                data-template-name="{{ $template->name }}"
+                data-template-category="{{ $template->category->name }}"
+                data-template-tasks="{{ $summary['tasks_count'] }}"
+                data-template-levels="{{ $summary['hierarchy_levels'] }}"
+                data-template-weight="{{ number_format($summary['total_leaf_weight'], 2, '.', '') }}"
+                data-template-duration="{{ $summary['duration_days'] }}"
                 class="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-700">
                 <i class="fa-solid fa-arrow-right"></i>
                 Gunakan Template

@@ -9,6 +9,9 @@ use App\Models\ProjectTemplateTask;
 use App\Models\ProjectTemplateTaskDependency;
 use App\Models\Task;
 use App\Models\User;
+use App\Models\Workspace;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
 use Tests\Support\CreatesProjectTemplateTestSchema;
 use Tests\TestCase;
 
@@ -20,6 +23,11 @@ class ProjectTemplateGalleryTest extends TestCase
     {
         parent::setUp();
         $this->createProjectTemplateTestSchema();
+        DB::connection()->getPdo()->sqliteCreateFunction('FIELD', function ($value, ...$values): int {
+            $position = array_search($value, $values, true);
+
+            return $position === false ? 0 : $position + 1;
+        });
     }
 
     public function test_guest_cannot_open_gallery_index_or_detail(): void
@@ -63,6 +71,42 @@ class ProjectTemplateGalleryTest extends TestCase
         $this->assertSame($runtimeTasksBefore, Task::query()->count());
     }
 
+    public function test_gallery_modal_uses_existing_project_store_and_only_lists_authorized_workspaces(): void
+    {
+        $user = User::factory()->member()->create();
+        $allowedWorkspace = Workspace::factory()->for($user, 'creator')->create(['name' => 'Allowed Workspace']);
+        $allowedWorkspace->members()->attach($user->id, ['role' => Workspace::ROLE_OWNER]);
+        $blockedWorkspace = Workspace::factory()->create(['name' => 'Blocked Workspace']);
+        $blockedWorkspace->members()->attach($user->id, ['role' => Workspace::ROLE_MEMBER]);
+        [$template] = $this->createTemplate(['name' => 'Modal Blueprint']);
+
+        $this->actingAs($user)
+            ->get(route('template-gallery.index'))
+            ->assertOk()
+            ->assertViewHas('workspaces', fn ($workspaces): bool => $workspaces->pluck('id')->all() === [
+                $allowedWorkspace->id,
+            ])
+            ->assertSee('id="use-template-modal"', false)
+            ->assertSee('action="'.route('projects.store').'"', false)
+            ->assertSee('name="project_template_id"', false)
+            ->assertSee('name="workspace_id"', false)
+            ->assertSee('name="name"', false)
+            ->assertSee('name="start_date"', false)
+            ->assertSee('name="due_date"', false)
+            ->assertSee('name="status"', false)
+            ->assertSee('name="description"', false)
+            ->assertSee($allowedWorkspace->name)
+            ->assertSee('data-gallery-workspace-id="'.$allowedWorkspace->id.'"', false)
+            ->assertDontSee('data-gallery-workspace-id="'.$blockedWorkspace->id.'"', false)
+            ->assertSee(route('projects.create', ['project_template_id' => $template->id]), false)
+            ->assertSee('data-use-template', false)
+            ->assertSee('data-project-start-date', false)
+            ->assertSee('data-project-due-date', false);
+
+        $this->assertSame('POST', Route::getRoutes()->getByName('projects.store')->methods()[0]);
+        $this->assertNull(Route::getRoutes()->getByName('template-gallery.store'));
+    }
+
     public function test_authenticated_user_can_open_detail_with_hierarchy_dependency_and_use_link(): void
     {
         $user = User::factory()->member()->create();
@@ -81,12 +125,85 @@ class ProjectTemplateGalleryTest extends TestCase
             ->assertSee('Weight 50.00')
             ->assertSee('Beban turunan 125.00')
             ->assertSee(route('projects.create', ['project_template_id' => $template->id]), false)
+            ->assertSee('id="use-template-modal"', false)
+            ->assertSee('action="'.route('projects.store').'"', false)
+            ->assertSee('data-template-name="'.$template->name.'"', false)
             ->assertSee('Kembali ke Gallery')
             ->assertDontSee('Edit Metadata')
             ->assertDontSee('Hapus Template');
 
         $this->assertSame($projectsBefore, Project::query()->count());
         $this->assertSame($runtimeTasksBefore, Task::query()->count());
+    }
+
+    public function test_validation_error_reopens_modal_and_restores_old_project_input(): void
+    {
+        $user = User::factory()->member()->create();
+        $workspace = Workspace::factory()->for($user, 'creator')->create();
+        $workspace->members()->attach($user->id, ['role' => Workspace::ROLE_OWNER]);
+        [$template] = $this->createTemplate(['name' => 'Restored Blueprint']);
+        $galleryUrl = route('template-gallery.index', ['search' => 'Restored', 'page' => 2]);
+
+        $this->actingAs($user)
+            ->from($galleryUrl)
+            ->post(route('projects.store'), [
+                'workspace_id' => $workspace->id,
+                'project_template_id' => $template->id,
+                'name' => 'Restored Project',
+                'description' => 'Input lama tetap tersedia.',
+                'start_date' => '2026-08-20',
+                'due_date' => '2026-08-10',
+                'status' => 'active',
+            ])
+            ->assertRedirect($galleryUrl)
+            ->assertSessionHasErrors('due_date');
+
+        $this->get($galleryUrl)
+            ->assertOk()
+            ->assertSee('data-reopen="true"', false)
+            ->assertSee('value="'.$template->id.'"', false)
+            ->assertSee('value="Restored Project"', false)
+            ->assertSee('Input lama tetap tersedia.')
+            ->assertSee('value="2026-08-20"', false)
+            ->assertSee('value="2026-08-10"', false)
+            ->assertSee('min="2026-08-20"', false)
+            ->assertSee('value="active" selected', false)
+            ->assertSee('The due date field must be a date after or equal to start date.');
+
+        $this->assertDatabaseCount('projects', 0);
+    }
+
+    public function test_gallery_modal_payload_creates_project_with_template_through_existing_flow(): void
+    {
+        $user = User::factory()->member()->create();
+        $workspace = Workspace::factory()->for($user, 'creator')->create();
+        $workspace->members()->attach($user->id, ['role' => Workspace::ROLE_OWNER]);
+        [$template] = $this->createTemplate(['name' => 'Applied Blueprint']);
+
+        $response = $this->actingAs($user)->post(route('projects.store'), [
+            'workspace_id' => $workspace->id,
+            'project_template_id' => $template->id,
+            'name' => 'Project from Gallery',
+            'description' => 'Created from the Gallery modal.',
+            'start_date' => '2026-08-01',
+            'due_date' => '2026-08-01',
+            'status' => 'planning',
+        ]);
+
+        $project = Project::query()->where('name', 'Project from Gallery')->firstOrFail();
+        $response->assertRedirect(route('projects.show', $project->token));
+        $this->assertSame($template->id, $project->project_template_id);
+        $this->assertSame('2026-08-07', $project->end_date->toDateString());
+        $this->assertCount(3, $project->tasks);
+        $this->assertDatabaseMissing('tasks', [
+            'project_id' => $project->id,
+            'name' => 'Project Kickoff',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('projects.create', ['project_template_id' => $template->id]))
+            ->assertOk()
+            ->assertViewHas('selectedProjectTemplateId', $template->id);
     }
 
     public function test_unusable_templates_return_not_found_on_detail(): void

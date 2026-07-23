@@ -78,4 +78,6 @@
             @endif
         @endif
     </div>
+
+    @include('project-template-gallery.partials._use-template-modal')
 @endsection

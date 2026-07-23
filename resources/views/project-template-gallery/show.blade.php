@@ -34,6 +34,14 @@
                         Kembali ke Gallery
                     </a>
                     <a href="{{ route('projects.create', ['project_template_id' => $projectTemplate->id]) }}"
+                        data-use-template
+                        data-template-id="{{ $projectTemplate->id }}"
+                        data-template-name="{{ $projectTemplate->name }}"
+                        data-template-category="{{ $preview['category'] }}"
+                        data-template-tasks="{{ $preview['summary']['tasks_count'] }}"
+                        data-template-levels="{{ $preview['summary']['hierarchy_levels'] }}"
+                        data-template-weight="{{ number_format($preview['summary']['total_leaf_weight'], 2, '.', '') }}"
+                        data-template-duration="{{ $preview['summary']['duration_days'] }}"
                         class="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-700">
                         <i class="fa-solid fa-arrow-right"></i>
                         Gunakan Template
@@ -59,4 +67,6 @@
             </div>
         </section>
     </div>
+
+    @include('project-template-gallery.partials._use-template-modal')
 @endsection
