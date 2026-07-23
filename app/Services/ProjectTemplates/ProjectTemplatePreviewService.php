@@ -27,6 +27,38 @@ class ProjectTemplatePreviewService
     ): array {
         $template->loadMissing('category:id,name,is_active,deleted_at');
         $tasks = $this->hierarchyService->loadGraph($template);
+
+        return $this->buildFromTasks($template, $tasks, $projectStartDate, $requestedDueDate);
+    }
+
+    /**
+     * @param  Collection<int, ProjectTemplate>  $templates
+     * @return Collection<int, array<string, int|float>>
+     */
+    public function summaries(Collection $templates): Collection
+    {
+        $templates->loadMissing([
+            'category:id,name,is_active,deleted_at',
+            'tasks.dependency.predecessor',
+        ]);
+
+        return $templates->mapWithKeys(function (ProjectTemplate $template): array {
+            $preview = $this->buildFromTasks($template, $template->tasks);
+
+            return [$template->id => $preview['summary']];
+        });
+    }
+
+    /**
+     * @param  Collection<int, ProjectTemplateTask>  $tasks
+     * @return array<string, mixed>
+     */
+    private function buildFromTasks(
+        ProjectTemplate $template,
+        Collection $tasks,
+        ?string $projectStartDate = null,
+        ?string $requestedDueDate = null,
+    ): array {
         $this->hierarchyService->validateGraph($template, $tasks);
 
         $calculationStartDate = CarbonImmutable::parse($projectStartDate ?? '2000-01-01')->startOfDay();

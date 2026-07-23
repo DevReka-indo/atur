@@ -12,6 +12,8 @@
             request()->routeIs('project-templates.*') ||
             request()->routeIs('project-template-categories.*');
 
+        $templateGalleryActive = request()->routeIs('template-gallery.*');
+
         $administrationActive =
             request()->routeIs('managementworkspaces.*') ||
             request()->routeIs('managementprojects.*') ||
@@ -168,14 +170,28 @@
         </div>
 
         {{-- Project Template --}}
-        @if (auth()->check() && auth()->user()->isPermissionSystemReady())
-            @canany(['project-template-categories.view', 'project-templates.view'])
-                <div>
-                    <p class="px-4 pb-2 pt-6 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                        Template
-                    </p>
+        <div>
+            <p class="px-4 pb-2 pt-6 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                Template
+            </p>
 
-                    <nav class="space-y-1 px-4">
+            <nav class="space-y-1 px-4">
+                <a href="{{ route('template-gallery.index') }}"
+                    class="flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all duration-200
+                        {{ $templateGalleryActive
+                            ? 'text-white shadow-lg'
+                            : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
+                    style="{{ $templateGalleryActive ? 'background-color: #0096c7' : '' }}">
+
+                    <i class="fa-solid fa-table-cells-large w-5 text-center text-sm"></i>
+
+                    <span class="text-sm font-medium">
+                        Template Gallery
+                    </span>
+                </a>
+
+                @if (auth()->check() && auth()->user()->isPermissionSystemReady())
+                    @canany(['project-template-categories.view', 'project-templates.view'])
                         <a href="{{ auth()->user()->can('project-templates.view')
                             ? route('project-templates.index')
                             : route('project-template-categories.index') }}"
@@ -191,10 +207,10 @@
                                 Project Templates
                             </span>
                         </a>
-                    </nav>
-                </div>
-            @endcanany
-        @endif
+                    @endcanany
+                @endif
+            </nav>
+        </div>
 
         {{-- Administrasi --}}
         @if (auth()->check() && auth()->user()->isPermissionSystemReady())

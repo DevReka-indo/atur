@@ -12,6 +12,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectTemplateCategoryController;
 use App\Http\Controllers\ProjectTemplateController;
+use App\Http\Controllers\ProjectTemplateGalleryController;
 use App\Http\Controllers\ProjectTemplatePreviewController;
 use App\Http\Controllers\ProjectTemplateTaskController;
 use App\Http\Controllers\RolePermissionController;
@@ -225,6 +226,12 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/projects', [ProjectController::class, 'store'])
         ->name('projects.store');
+
+    Route::get('/template-gallery', [ProjectTemplateGalleryController::class, 'index'])
+        ->name('template-gallery.index');
+
+    Route::get('/template-gallery/{projectTemplate:slug}', [ProjectTemplateGalleryController::class, 'show'])
+        ->name('template-gallery.show');
 
     Route::get('/projects/{token}', [ProjectController::class, 'show'])
         ->name('projects.show');
