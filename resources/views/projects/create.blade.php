@@ -73,28 +73,7 @@
 
                             {{-- Project Template --}}
                             <div class="lg:col-span-1">
-                                <label for="project_template_id" class="block text-sm font-semibold text-gray-800 mb-2">
-                                    Buat Project Dari
-                                </label>
-                                <select name="project_template_id" id="project_template_id"
-                                    class="w-full rounded-xl border border-gray-300 px-4 py-3 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 @error('project_template_id') border-red-400 bg-red-50/50 @enderror">
-                                    <option value="" data-default="true">Tanpa Template</option>
-                                    @foreach ($projectTemplates as $projectTemplate)
-                                        <option value="{{ $projectTemplate['id'] }}"
-                                            data-template='@json($projectTemplate)'
-                                            @selected((int) old('project_template_id') === $projectTemplate['id'])>
-                                            {{ $projectTemplate['category'] }} — {{ $projectTemplate['name'] }}
-                                        </option>
-                                    @endforeach
-                                </select>
-                                @error('project_template_id')
-                                    <div class="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{{ $message }}</div>
-                                @enderror
-                                <div id="project-template-preview" class="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                                    <p class="font-semibold text-slate-800">Tanpa Template</p>
-                                    <p class="mt-1">Enam default task tetap dibuat seperti flow sebelumnya.</p>
-                                </div>
-                                <p class="mt-2 text-xs text-slate-500">Jika template dipilih, task default tidak dibuat dan timeline project dapat diperpanjang mengikuti task terakhir.</p>
+                                @include('projects.partials._template-selector')
                             </div>
 
                             {{-- Timeline --}}
@@ -106,7 +85,7 @@
                                 <div class="grid grid-cols-2 gap-3">
                                     <div>
                                         <input type="date" name="start_date" id="start_date"
-                                            value="{{ old('start_date') }}" required onchange="updateMinDueDate(this.value)"
+                                            value="{{ old('start_date') }}" required
                                             class="w-full px-4 py-3 border border-gray-300 rounded-xl
                     focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500
                     transition-all duration-200
@@ -142,6 +121,8 @@
                                     <span>Due Date</span>
                                 </div>
                             </div>
+
+                            @include('projects.partials._template-preview')
                         </div>
 
                         {{-- Row 2: Project Name + Status --}}
@@ -222,34 +203,4 @@
         </div>
     </div>
 
-    <script>
-        function updateMinDueDate(startDateValue) {
-            const dueDateInput = document.getElementById('due_date');
-
-            if (!dueDateInput) {
-                return;
-            }
-
-            if (!startDateValue) {
-                dueDateInput.removeAttribute('min');
-                return;
-            }
-
-            dueDateInput.min = startDateValue;
-
-            if (dueDateInput.value && dueDateInput.value < startDateValue) {
-                dueDateInput.value = '';
-            }
-        }
-
-        window.addEventListener('DOMContentLoaded', function() {
-            const startDateInput = document.getElementById('start_date');
-
-            if (!startDateInput) {
-                return;
-            }
-
-            updateMinDueDate(startDateInput.value);
-        });
-    </script>
 @endsection

@@ -12,6 +12,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectTemplateCategoryController;
 use App\Http\Controllers\ProjectTemplateController;
+use App\Http\Controllers\ProjectTemplatePreviewController;
 use App\Http\Controllers\ProjectTemplateTaskController;
 use App\Http\Controllers\RolePermissionController;
 use App\Http\Controllers\TaskController;
@@ -491,6 +492,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/project-templates', [ProjectTemplateController::class, 'store'])
         ->middleware('permission:project-templates.create')
         ->name('project-templates.store');
+
+    Route::get('/project-templates/{projectTemplate:id}/preview', ProjectTemplatePreviewController::class)
+        ->name('project-templates.preview');
 
     Route::get('/project-templates/{project_template:slug}', [ProjectTemplateController::class, 'show'])
         ->middleware('permission:project-templates.view')

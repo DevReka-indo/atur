@@ -20,9 +20,9 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Illuminate\View\View;
 
 class ProjectController extends Controller
 {
@@ -58,38 +58,32 @@ class ProjectController extends Controller
         return view('projects.index', compact('projects', 'view'));
     }
 
-    public function create()
+    public function create(Request $request): View
     {
         $workspaces = Auth::user()->workspaces;
         $projectTemplates = ProjectTemplate::query()
             ->where('is_active', true)
             ->whereHas('category', fn ($query) => $query->where('is_active', true))
-            ->with([
-                'category:id,name',
-                'tasks:id,project_template_id,parent_id,name,weight,start_offset_days,duration_days',
-            ])
+            ->with('category:id,name')
             ->orderBy('name')
-            ->get()
-            ->map(function (ProjectTemplate $template): array {
-                $parentIds = $template->tasks->pluck('parent_id')->filter()->map(fn ($id): int => (int) $id)->unique();
-                $leafTasks = $template->tasks->reject(fn ($task): bool => $parentIds->contains($task->id));
-                $estimatedEndOffset = $leafTasks->max(
-                    fn ($task): int => $task->start_offset_days + $task->duration_days - 1
-                ) ?? 0;
+            ->get(['id', 'project_template_category_id', 'name', 'version'])
+            ->map(fn (ProjectTemplate $template): array => [
+                'id' => $template->id,
+                'name' => $template->name,
+                'category' => $template->category->name,
+                'version' => $template->version,
+            ]);
+        $requestedTemplateId = old('project_template_id', $request->query('project_template_id'));
+        $selectedProjectTemplateId = is_numeric($requestedTemplateId)
+            && $projectTemplates->contains(fn (array $template): bool => $template['id'] === (int) $requestedTemplateId)
+                ? (int) $requestedTemplateId
+                : null;
 
-                return [
-                    'id' => $template->id,
-                    'name' => $template->name,
-                    'category' => $template->category->name,
-                    'description' => Str::limit($template->description, 140),
-                    'version' => $template->version,
-                    'tasks_count' => $template->tasks->count(),
-                    'leaf_weight' => round((float) $leafTasks->sum('weight'), 2),
-                    'estimated_end_offset' => $estimatedEndOffset,
-                ];
-            });
-
-        return view('projects.create', compact('workspaces', 'projectTemplates'));
+        return view('projects.create', compact(
+            'workspaces',
+            'projectTemplates',
+            'selectedProjectTemplateId',
+        ));
     }
 
     public function store(Request $request, ProjectProgressService $projectProgressService)
