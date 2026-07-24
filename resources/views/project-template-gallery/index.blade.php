@@ -5,9 +5,9 @@
     <div class="w-full px-4 py-5 md:px-8">
         <div class="mb-6">
             <div class="flex items-center gap-3">
-                <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-sky-500/20">
+                {{-- <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-sky-500/20">
                     <i class="fa-solid fa-table-cells-large"></i>
-                </span>
+                </span> --}}
                 <div>
                     <h1 class="text-3xl font-bold text-slate-900">Template Gallery</h1>
                     <p class="mt-1 text-sm text-slate-500">Jelajahi dan gunakan template project yang tersedia.</p>
