@@ -6,8 +6,11 @@ use App\Models\Project;
 use App\Models\ProjectTemplate;
 use App\Models\ProjectTemplateCategory;
 use App\Models\ProjectTemplateTask;
+use App\Models\ProjectTemplateTaskDependency;
+use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\CreatesProjectTemplateTestSchema;
 use Tests\TestCase;
@@ -20,6 +23,12 @@ class ProjectTemplateManagementTest extends TestCase
     {
         parent::setUp();
         $this->createProjectTemplateTestSchema();
+        DB::statement('PRAGMA foreign_keys = ON');
+        DB::connection()->getPdo()->sqliteCreateFunction('FIELD', function ($value, ...$values): int {
+            $position = array_search($value, $values, true);
+
+            return $position === false ? 0 : $position + 1;
+        });
     }
 
     public function test_permissions_and_template_metadata_crud_are_enforced(): void
@@ -139,27 +148,59 @@ class ProjectTemplateManagementTest extends TestCase
         ];
     }
 
-    public function test_super_admin_soft_delete_preserves_project_lineage_snapshot(): void
+    public function test_soft_delete_of_applied_template_preserves_project_runtime_graph_and_template_definition(): void
     {
-        $user = User::factory()->superAdmin()->create();
-        $category = $this->category($user);
-        $template = ProjectTemplate::factory()->for($category, 'category')->for($user, 'creator')->create([
-            'name' => 'Stable Snapshot',
-            'version' => 7,
-        ]);
-        $workspace = Workspace::factory()->for($user, 'creator')->create();
-        $project = Project::factory()->for($workspace)->for($user, 'creator')->create([
-            'project_template_id' => $template->id,
-            'source_template_name' => $template->name,
-            'source_template_version' => $template->version,
-        ]);
+        [$user, $workspace, $template, $project, $templateTasks, $dependency] = $this->appliedTemplateProject();
+        $runtimeTasksBefore = $this->runtimeTaskGraph($project);
 
         $this->actingAs($user)->delete(route('project-templates.destroy', $template))->assertRedirect();
 
         $this->assertSoftDeleted($template);
-        $this->assertSame('Stable Snapshot', $project->fresh()->source_template_name);
-        $this->assertSame(7, $project->fresh()->source_template_version);
-        $this->assertTrue($project->fresh()->sourceTemplate->trashed());
+        $this->assertModelExists($workspace);
+        $this->assertModelExists($project);
+
+        $projectAfterDelete = $project->fresh();
+        $this->assertSame($template->id, $projectAfterDelete->project_template_id);
+        $this->assertSame($template->name, $projectAfterDelete->source_template_name);
+        $this->assertSame($template->version, $projectAfterDelete->source_template_version);
+        $this->assertSame($runtimeTasksBefore, $this->runtimeTaskGraph($projectAfterDelete));
+
+        foreach ($templateTasks as $templateTask) {
+            $this->assertModelExists($templateTask);
+        }
+
+        $this->assertModelExists($dependency);
+        $this->assertNotNull($projectAfterDelete->sourceTemplate);
+        $this->assertTrue($projectAfterDelete->sourceTemplate->trashed());
+    }
+
+    public function test_force_delete_nulls_project_lineage_link_without_deleting_project_or_runtime_graph(): void
+    {
+        [$user, $workspace, $template, $project, $templateTasks, $dependency] = $this->appliedTemplateProject();
+        $runtimeTasksBefore = $this->runtimeTaskGraph($project);
+        $foreignKeys = DB::selectOne('PRAGMA foreign_keys');
+
+        $this->assertSame(1, (int) $foreignKeys->foreign_keys);
+
+        $this->actingAs($user)->delete(route('project-templates.destroy', $template))->assertRedirect();
+        ProjectTemplate::withTrashed()->findOrFail($template->id)->forceDelete();
+
+        $this->assertNull(ProjectTemplate::withTrashed()->find($template->id));
+        $this->assertModelExists($workspace);
+        $this->assertModelExists($project);
+
+        $projectAfterDelete = $project->fresh();
+        $this->assertNull($projectAfterDelete->project_template_id);
+        $this->assertSame($template->name, $projectAfterDelete->source_template_name);
+        $this->assertSame($template->version, $projectAfterDelete->source_template_version);
+        $this->assertNull($projectAfterDelete->sourceTemplate);
+        $this->assertSame($runtimeTasksBefore, $this->runtimeTaskGraph($projectAfterDelete));
+
+        foreach ($templateTasks as $templateTask) {
+            $this->assertModelMissing($templateTask);
+        }
+
+        $this->assertModelMissing($dependency);
     }
 
     private function category(?User $user = null, bool $active = true): ProjectTemplateCategory
@@ -167,5 +208,105 @@ class ProjectTemplateManagementTest extends TestCase
         $user ??= User::factory()->superAdmin()->create();
 
         return ProjectTemplateCategory::factory()->for($user, 'creator')->create(['is_active' => $active]);
+    }
+
+    /**
+     * @return array{
+     *     User,
+     *     Workspace,
+     *     ProjectTemplate,
+     *     Project,
+     *     array<int, ProjectTemplateTask>,
+     *     ProjectTemplateTaskDependency
+     * }
+     */
+    private function appliedTemplateProject(): array
+    {
+        $user = User::factory()->superAdmin()->create();
+        $category = $this->category($user);
+        $template = ProjectTemplate::factory()
+            ->for($category, 'category')
+            ->for($user, 'creator')
+            ->create([
+                'name' => 'Stable Snapshot',
+                'version' => 7,
+                'is_active' => true,
+            ]);
+        $root = ProjectTemplateTask::factory()->for($template, 'template')->create([
+            'name' => 'Delivery',
+            'weight' => null,
+            'position' => 0,
+        ]);
+        $analysis = ProjectTemplateTask::factory()->for($template, 'template')->create([
+            'parent_id' => $root->id,
+            'name' => 'Analysis',
+            'weight' => 50,
+            'position' => 0,
+            'start_offset_days' => 0,
+            'duration_days' => 3,
+        ]);
+        $implementation = ProjectTemplateTask::factory()->for($template, 'template')->create([
+            'parent_id' => $root->id,
+            'name' => 'Implementation',
+            'weight' => 75,
+            'position' => 1,
+            'start_offset_days' => 0,
+            'duration_days' => 2,
+        ]);
+        $dependency = ProjectTemplateTaskDependency::query()->create([
+            'project_template_id' => $template->id,
+            'project_template_task_id' => $implementation->id,
+            'predecessor_template_task_id' => $analysis->id,
+            'dependency_type' => 'FS',
+            'lag_days' => 2,
+        ]);
+        $workspace = Workspace::factory()->for($user, 'creator')->create();
+        $workspace->members()->attach($user->id, [
+            'role' => Workspace::ROLE_OWNER,
+            'joined_at' => now(),
+        ]);
+
+        $this->actingAs($user)->post(route('projects.store'), [
+            'workspace_id' => $workspace->id,
+            'project_template_id' => $template->id,
+            'name' => 'Project from Stable Snapshot',
+            'description' => 'Runtime project used by template deletion tests.',
+            'start_date' => '2026-08-01',
+            'due_date' => '2026-08-10',
+            'status' => 'planning',
+        ])->assertRedirect();
+
+        $project = Project::query()->where('name', 'Project from Stable Snapshot')->firstOrFail();
+        $this->assertSame($template->id, $project->project_template_id);
+        $this->assertSame($template->name, $project->source_template_name);
+        $this->assertSame($template->version, $project->source_template_version);
+        $this->assertCount(3, $project->tasks);
+
+        return [
+            $user,
+            $workspace,
+            $template,
+            $project,
+            [$root, $analysis, $implementation],
+            $dependency,
+        ];
+    }
+
+    /**
+     * @return array<int, array{parent_task_id: int|null, predecessor_id: int|null}>
+     */
+    private function runtimeTaskGraph(Project $project): array
+    {
+        return Task::query()
+            ->whereBelongsTo($project)
+            ->orderBy('id')
+            ->get(['id', 'parent_task_id', 'predecessor_id'])
+            ->mapWithKeys(fn (Task $task): array => [
+                $task->id => [
+                    'parent_task_id' => $task->parent_task_id,
+                    'predecessor_id' => $task->predecessor_id,
+                ],
+            ])
+            ->all();
     }
 }
