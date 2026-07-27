@@ -16,7 +16,7 @@
 
             @include('projects.partials.show._tasks-tab')
 
-            @include('projects.partials.show._members-tab')
+            @include('projects.partials.show.members._index')
 
             @include('projects.partials.show._chart-tab')
         </div>

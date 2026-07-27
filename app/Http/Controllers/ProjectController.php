@@ -657,7 +657,7 @@ class ProjectController extends Controller
                     'user_id' => $userId,
                     'type' => 'project_added',
                     'title' => 'Ditambahkan ke Project',
-                    'message' => 'Anda ditambahkan ke project "'.$project->name.'" sebagai '.ucfirst($validated['role']),
+                    'message' => 'Anda ditambahkan ke project "'.$project->name.'" sebagai '.Project::roleLabel($validated['role']),
                     'project_id' => $project->id,
                     'task_id' => null,
                 ]);
@@ -665,7 +665,7 @@ class ProjectController extends Controller
                 // Kirim email via Job
                 $recipient = User::find($userId);
                 if ($recipient) {
-                    SendEmailNotification::dispatch($recipient, 'Ditambahkan ke Project', 'Anda ditambahkan ke project "'.$project->name.'" sebagai '.ucfirst($validated['role']), route('projects.show', $project->token));
+                    SendEmailNotification::dispatch($recipient, 'Ditambahkan ke Project', 'Anda ditambahkan ke project "'.$project->name.'" sebagai '.Project::roleLabel($validated['role']), route('projects.show', $project->token));
                 }
             }
             $added++;

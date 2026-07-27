@@ -125,10 +125,6 @@
                 <div class="flex items-center gap-4">
                     {{-- Avatar Initial --}}
                     <div class="relative">
-                        @php
-                            $invitedUser = \App\Models\User::where('email', $invitation->email)->first();
-                        @endphp
-
                         @if ($invitedUser && $invitedUser->profile_photo)
                             <img src="{{ asset('storage/' . $invitedUser->profile_photo) }}"
                                 alt="{{ $invitedUser->name }}"
@@ -233,10 +229,13 @@
                 {{-- Action Buttons --}}
                 <div class="flex flex-col sm:flex-row gap-3">
                     {{-- Accept Button --}}
-                    <form action="{{ route('invitations.store-session') }}" method="POST" class="flex-1">
+                    <form action="{{ auth()->check() ? route('invitations.join') : route('invitations.store-session') }}"
+                        method="POST" class="flex-1">
                         @csrf
-                        <input type="hidden" name="token" value="{{ $invitation->token }}">
-                        <input type="hidden" name="redirect" value="register">
+                        <input type="hidden" name="token" value="{{ $token }}">
+                        @guest
+                            <input type="hidden" name="redirect" value="register">
+                        @endguest
                         <button type="submit"
                             class="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-violet-600
                                    hover:from-indigo-700 hover:to-violet-700
@@ -251,7 +250,7 @@
                     {{-- Decline Button --}}
                     <form action="{{ route('invitations.decline') }}" method="POST" class="flex-1">
                         @csrf
-                        <input type="hidden" name="token" value="{{ $invitation->token }}">
+                        <input type="hidden" name="token" value="{{ $token }}">
                         <button type="submit"
                             class="w-full py-3 px-4 bg-white hover:bg-gray-50
                                    text-gray-700 text-sm font-semibold rounded-xl

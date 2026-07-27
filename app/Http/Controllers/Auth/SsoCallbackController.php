@@ -90,6 +90,20 @@ class SsoCallbackController extends Controller
 
             $request->session()->regenerate();
 
+            if ($request->session()->has('invitation_token')) {
+                return redirect()->route(
+                    'invitations.accept',
+                    $request->session()->get('invitation_token'),
+                );
+            }
+
+            if ($request->session()->has('workspace_invite_token')) {
+                return redirect()->route(
+                    'workspaces.invite.join',
+                    $request->session()->get('workspace_invite_token'),
+                );
+            }
+
             return redirect(config('services.sso.after_login_url', '/'));
         } catch (Throwable $e) {
             report($e);

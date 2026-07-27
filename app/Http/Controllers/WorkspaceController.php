@@ -92,6 +92,12 @@ class WorkspaceController extends Controller
             'members' => function ($query) {
                 $query->withPivot('role', 'joined_at');
             },
+            'invitations' => function ($query) {
+                $query->pending()
+                    ->where('expires_at', '>', now())
+                    ->with('inviter:id,name')
+                    ->latest();
+            },
         ]);
 
         $workspace->setRelation(
@@ -111,17 +117,9 @@ class WorkspaceController extends Controller
             })->values()
         );
 
-        $availableUsers = User::whereNotIn('id', $workspace->members->pluck('id'))
-            ->orderBy('name')
-            ->get();
-
         $currentRole = $workspace->roleForUser($user);
 
-        if (! $workspace->invite_token) {
-            $workspace->generateInviteToken();
-        }
-
-        return view('workspaces.show', compact('workspace', 'availableUsers', 'currentRole'));
+        return view('workspaces.show', compact('workspace', 'currentRole'));
     }
 
     public function edit(string $token)
@@ -390,6 +388,19 @@ class WorkspaceController extends Controller
         $workspace->resetInviteToken();
 
         return back()->with('success', 'Invite link berhasil direset. Link lama tidak berlaku lagi.');
+    }
+
+    public function revokeInviteLink(string $token)
+    {
+        $workspace = $this->findByToken($token);
+
+        if (! $workspace->canManageMembers(auth()->user())) {
+            abort(403);
+        }
+
+        $workspace->revokeInviteToken();
+
+        return back()->with('success', 'Invite link berhasil dinonaktifkan.');
     }
 
     public function managementIndex()

@@ -113,17 +113,20 @@
                             @if ($isOwner)
                                 <span
                                     class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                                    <i class="fa-solid fa-crown"></i> Owner
+                                    <i class="fa-solid fa-crown"></i>
+                                    {{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_OWNER) }}
                                 </span>
                             @elseif ($currentRole === 'admin')
                                 <span
                                     class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-gray-500">
-                                    <i class="fa-solid fa-shield-halved"></i> Admin
+                                    <i class="fa-solid fa-shield-halved"></i>
+                                    {{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_ADMIN) }}
                                 </span>
                             @else
                                 <span
                                     class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-gray-500">
-                                    <i class="fa-solid fa-user"></i> Member
+                                    <i class="fa-solid fa-user"></i>
+                                    {{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_MEMBER) }}
                                 </span>
                             @endif
                         </div>
@@ -181,6 +184,12 @@
                 ])
 
             </div>
+
+            @if ($canManageMembers)
+                @include('workspaces.partials.members._pending-invitations', [
+                    'workspace' => $workspace,
+                ])
+            @endif
         </div>
 
         {{-- PROJECTS TAB --}}
@@ -502,7 +511,7 @@
                 <div class="bg-purple-50/50 rounded-xl p-4 border-2 border-purple-200">
                     <div class="flex items-center justify-between mb-4">
                         <h4 class="font-bold text-purple-900 flex items-center gap-2">
-                            <i class="fa-solid fa-shield-halved"></i> Admins
+                            <i class="fa-solid fa-shield-halved"></i> Workspace Admins
                         </h4>
                         <span class="bg-purple-200 text-purple-800 text-xs font-bold px-2 py-1 rounded-full">
                             {{ $admins->count() + ($owner ? 1 : 0) }}
@@ -532,7 +541,8 @@
                                     <div class="flex items-center gap-1.5 flex-shrink-0">
                                         <span
                                             class="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                                            <i class="fa-solid fa-crown text-[10px] mr-0.5"></i> Owner
+                                            <i class="fa-solid fa-crown text-[10px] mr-0.5"></i>
+                                            {{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_OWNER) }}
                                         </span>
                                         @if ($owner->id === Auth::id())
                                             <span
@@ -599,7 +609,7 @@
                                                             @csrf @method('PATCH')
                                                             <input type="hidden" name="role" value="admin">
                                                             <button type="submit"
-                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">Admin</button>
+                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">{{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_ADMIN) }}</button>
                                                         </form>
                                                     @endif
                                                     @if ($member->pivot->role !== 'member')
@@ -608,7 +618,7 @@
                                                             @csrf @method('PATCH')
                                                             <input type="hidden" name="role" value="member">
                                                             <button type="submit"
-                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">Member</button>
+                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">{{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_MEMBER) }}</button>
                                                         </form>
                                                     @endif
                                                 </div>
@@ -636,7 +646,7 @@
                 <div class="bg-blue-50/50 rounded-xl p-4 border-2 border-blue-200">
                     <div class="flex items-center justify-between mb-4">
                         <h4 class="font-bold text-blue-900 flex items-center gap-2">
-                            <i class="fa-solid fa-user-group"></i> Members
+                            <i class="fa-solid fa-user-group"></i> Workspace Members
                         </h4>
                         <span
                             class="bg-blue-200 text-blue-800 text-xs font-bold px-2 py-1 rounded-full">{{ $regularMembers->count() }}</span>
@@ -697,7 +707,7 @@
                                                             @csrf @method('PATCH')
                                                             <input type="hidden" name="role" value="admin">
                                                             <button type="submit"
-                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">Admin</button>
+                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">{{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_ADMIN) }}</button>
                                                         </form>
                                                     @endif
                                                     @if ($member->pivot->role !== 'member')
@@ -706,7 +716,7 @@
                                                             @csrf @method('PATCH')
                                                             <input type="hidden" name="role" value="member">
                                                             <button type="submit"
-                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">Member</button>
+                                                                class="w-full text-left px-3 py-2 pl-9 text-sm text-gray-600 hover:bg-purple-50 transition-colors">{{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_MEMBER) }}</button>
                                                         </form>
                                                     @endif
                                                 </div>
@@ -830,110 +840,11 @@
         </div>
     </div>
 
-    {{-- MODAL INVITE --}}
-    <div id="inviteModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-
-            {{-- Header --}}
-            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-                <div class="flex items-center gap-3">
-                    <div
-                        class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600
-                            flex items-center justify-center text-white text-sm font-bold">
-                        {{ strtoupper(substr($workspace->name, 0, 1)) }}
-                    </div>
-                    <div>
-                        <h2 class="text-sm font-bold text-gray-900">Invite to "{{ $workspace->name }}"</h2>
-                        <p class="text-xs text-gray-400">Tambahkan anggota baru ke workspace ini</p>
-                    </div>
-                </div>
-                <button onclick="document.getElementById('inviteModal').classList.add('hidden')"
-                    class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 transition">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-
-            {{-- Body --}}
-            <div class="px-6 py-5 space-y-5">
-
-                {{-- Flash Messages --}}
-                @if (session('invite_success'))
-                    <div
-                        class="px-4 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs rounded-xl flex items-center gap-2">
-                        <i class="fa-solid fa-circle-check"></i> {{ session('invite_success') }}
-                    </div>
-                @endif
-                @if (session('invite_error'))
-                    <div
-                        class="px-4 py-2.5 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center gap-2">
-                        <i class="fa-solid fa-circle-exclamation"></i> {{ session('invite_error') }}
-                    </div>
-                @endif
-
-                {{-- Section 1: Invite via Email --}}
-                <div>
-                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                        <i class="fa-solid fa-envelope mr-1"></i> Undang via Email
-                    </label>
-                    <form action="{{ route('invitations.send') }}" method="POST">
-                        @csrf
-                        <input type="hidden" name="type" value="workspace">
-                        <input type="hidden" name="invitable_id" value="{{ $workspace->id }}">
-                        <div class="flex gap-2">
-                            <input type="email" name="email" required placeholder="colleague@example.com"
-                                class="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-sm
-                                   focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-                            <button type="submit"
-                                class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white
-                                   text-sm font-semibold rounded-xl transition flex items-center gap-1.5">
-                                <i class="fa-solid fa-paper-plane text-xs"></i>
-                                Kirim
-                            </button>
-                        </div>
-                        <p class="text-xs text-gray-400 mt-1.5">Mereka akan menerima email undangan</p>
-                    </form>
-                </div>
-
-                {{-- Divider --}}
-                <div class="flex items-center gap-3">
-                    <div class="flex-1 h-px bg-gray-200"></div>
-                    <span class="text-xs text-gray-400 font-medium">atau bagikan link</span>
-                    <div class="flex-1 h-px bg-gray-200"></div>
-                </div>
-
-                {{-- Section 2: Copy Link --}}
-                <div>
-                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                        <i class="fa-solid fa-link mr-1"></i> Invite Link
-                    </label>
-                    <div class="flex gap-2">
-                        <input type="text" readonly id="invite-link-input"
-                            value="{{ $workspace->invite_token ? route('workspaces.invite.join', $workspace->invite_token) : '' }}"
-                            class="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-xs
-                               bg-gray-50 text-gray-500 cursor-default focus:outline-none truncate">
-                        <button type="button" onclick="copyInviteLink()" id="copy-link-btn"
-                            class="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5
-                               rounded-xl border border-gray-300 bg-white hover:bg-gray-50
-                               text-sm font-medium text-gray-700 transition">
-                            <i class="fa-regular fa-copy text-sm" id="copy-icon"></i>
-                            <span id="copy-label">Salin</span>
-                        </button>
-                    </div>
-                    <p class="text-xs text-gray-400 mt-1.5">
-                        Siapapun dengan link ini dapat bergabung sebagai Member
-                    </p>
-                </div>
-
-            </div>
-
-            {{-- Footer --}}
-            <div class="px-6 py-3 bg-gray-50 loborder-t border-gray-100 flex items-center gap-2">
-                <i class="fa-solid fa-shield-halved text-gray-400 text-xs"></i>
-                <p class="text-xs text-gray-400">Hanya Owner & Admin yang dapat mengundang anggota</p>
-            </div>
-
-        </div>
-    </div>
+    @if ($canManageMembers)
+        @include('workspaces.partials.members._invite-modal', [
+            'workspace' => $workspace,
+        ])
+    @endif
     <script>
         function switchTab(tabName) {
             // Hide all tab contents
@@ -995,33 +906,6 @@
         function toggleSubRoles(subId) {
             const sub = document.getElementById(subId);
             if (sub) sub.classList.toggle('hidden');
-        }
-
-        function copyInviteLink() {
-            const input = document.getElementById('invite-link-input');
-            const btn = document.getElementById('copy-link-btn');
-            const icon = document.getElementById('copy-icon');
-            const label = document.getElementById('copy-label');
-
-            navigator.clipboard.writeText(input.value).then(() => {
-                // Ubah tampilan tombol jadi "Tersalin"
-                icon.classList.replace('fa-regular', 'fa-solid');
-                icon.classList.replace('fa-copy', 'fa-check');
-                icon.classList.add('text-green-500');
-                label.textContent = 'Tersalin!';
-                btn.classList.add('border-green-300', 'bg-green-50', 'text-green-700');
-                btn.classList.remove('border-gray-300', 'bg-white', 'text-gray-700');
-
-                // Kembalikan ke semula setelah 2 detik
-                setTimeout(() => {
-                    icon.classList.replace('fa-solid', 'fa-regular');
-                    icon.classList.replace('fa-check', 'fa-copy');
-                    icon.classList.remove('text-green-500');
-                    label.textContent = 'Salin';
-                    btn.classList.remove('border-green-300', 'bg-green-50', 'text-green-700');
-                    btn.classList.add('border-gray-300', 'bg-white', 'text-gray-700');
-                }, 2000);
-            });
         }
 
         document.addEventListener('click', function(e) {

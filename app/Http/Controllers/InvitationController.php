@@ -5,145 +5,183 @@ namespace App\Http\Controllers;
 use App\Mail\InvitationMail;
 use App\Models\Invitation;
 use App\Models\Project;
+use App\Models\User;
 use App\Models\Workspace;
+use App\Services\WorkspaceInvitationService;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\View\View;
 
 class InvitationController extends Controller
 {
-    public function send(Request $request)
+    public function __construct(
+        private readonly WorkspaceInvitationService $workspaceInvitationService,
+    ) {}
+
+    public function send(Request $request): RedirectResponse
     {
-        $request->validate([
-            'email'        => 'required|email',
-            'type'         => 'required|in:workspace,project',
-            'invitable_id' => 'required|integer',
+        $validated = $request->validate([
+            'email' => ['required', 'email:rfc', 'max:255'],
+            'type' => ['required', 'in:workspace,project'],
+            'invitable_id' => ['required', 'integer'],
         ]);
 
-        $exists = Invitation::where('email', $request->email)
-            ->where('type', $request->type)
-            ->where('invitable_id', $request->invitable_id)
-            ->where('status', 'pending')
-            ->exists();
+        if ($validated['type'] === 'workspace') {
+            $workspace = Workspace::query()->findOrFail($validated['invitable_id']);
+            abort_unless($workspace->canManageMembers($request->user()), 403);
 
-        if ($exists) {
-            return back()->with('invite_error', 'This email has already been invited.');
+            $result = $this->workspaceInvitationService->invite(
+                $workspace,
+                $request->user(),
+                Workspace::ROLE_MEMBER,
+                null,
+                $validated['email'],
+            );
+
+            return back()->with('invite_success', $result['message']);
         }
 
-        $invitable = $request->type === 'workspace'
-            ? Workspace::findOrFail($request->invitable_id)
-            : Project::findOrFail($request->invitable_id);
+        $project = Project::query()->findOrFail($validated['invitable_id']);
+        $plainTextToken = (string) Str::uuid();
 
         $invitation = Invitation::create([
-            'email'        => $request->email,
-            'token'        => Str::uuid(),
-            'type'         => $request->type,
-            'invitable_id' => $request->invitable_id,
-            'invited_by' => Auth::id(),
-            'status'       => 'pending',
-            'expires_at'   => now()->addDays(3),
-        ]);
+            'email' => strtolower(trim($validated['email'])),
+            'token' => Invitation::hashToken($plainTextToken),
+            'type' => 'project',
+            'invitable_id' => $project->id,
+            'invited_by' => $request->user()->id,
+            'role' => 'member',
+            'status' => Invitation::STATUS_PENDING,
+            'expires_at' => now()->addDays(3),
+            'last_sent_at' => now(),
+        ])->load('inviter');
 
-        Mail::to($request->email)->send(new InvitationMail($invitation, $invitable->name));
+        Mail::to($invitation->email)->queue(new InvitationMail(
+            $invitation,
+            $project->name,
+            $plainTextToken,
+            'Project Member',
+        ));
 
-        return back()->with('invite_success', 'Invitation sent to ' . $request->email);
+        return back()->with('invite_success', 'Invitation sent to '.$invitation->email);
     }
 
-    public function accept(string $token)
+    public function accept(string $token): View|RedirectResponse
     {
-        $invitation = Invitation::where('token', $token)
-            ->where('status', 'pending')
-            ->firstOrFail();
+        $invitation = Invitation::findByPlainTextToken($token);
 
-        if ($invitation->isExpired()) {
-            $invitation->update(['status' => 'expired']);
-            return redirect()->route('login')->with('error', 'Invitation has expired.');
+        if (! $invitation?->isUsable()) {
+            return redirect()->route('login')
+                ->with('error', 'Invitation is invalid, expired, or has been revoked.');
+        }
+
+        if (auth()->check() && strcasecmp(auth()->user()->email, $invitation->email) !== 0) {
+            abort(403, 'Gunakan akun dengan email yang sama dengan undangan.');
         }
 
         $invitable = $invitation->type === 'workspace'
-            ? \App\Models\Workspace::find($invitation->invitable_id)
-            : \App\Models\Project::find($invitation->invitable_id);
+            ? Workspace::query()->find($invitation->invitable_id)
+            : Project::query()->find($invitation->invitable_id);
+        abort_if(! $invitable, 404);
 
-        return view('invitations.index', compact('invitation', 'invitable'));
+        $invitation->load('inviter');
+        $invitedUser = User::query()
+            ->select(['id', 'name', 'email', 'profile_photo'])
+            ->whereRaw('LOWER(email) = ?', [strtolower($invitation->email)])
+            ->first();
+
+        return view('invitations.index', compact(
+            'invitation',
+            'invitable',
+            'invitedUser',
+            'token',
+        ));
     }
 
-    public function complete()
+    public function complete(): void
     {
-        $token = session('invitation_token');
-        if (!$token) return;
-
-        $invitation = Invitation::where('token', $token)->where('status', 'pending')->first();
-        if (!$invitation || $invitation->isExpired()) return;
-
-        $user = auth::user();
-
-        if ($invitation->type === 'workspace') {
-            Workspace::find($invitation->invitable_id)?->members()->syncWithoutDetaching($user->id);
-        } else {
-            Project::find($invitation->invitable_id)?->members()->syncWithoutDetaching($user->id);
+        if (session()->has('invitation_token') && auth()->check()) {
+            $this->acceptPendingInvitation(session('invitation_token'), auth()->user());
         }
-
-        $invitation->update(['status' => 'accepted']);
-        session()->forget('invitation_token');
     }
 
-    public function join(Request $request)
+    public function join(Request $request): RedirectResponse
     {
-        $token = session('invitation_token');
-        if (!$token) return redirect()->route('dashboard');
+        $token = (string) session('invitation_token', $request->input('token', ''));
 
-        $invitation = Invitation::where('token', $token)->where('status', 'pending')->firstOrFail();
-
-        if ($invitation->isExpired()) {
-            $invitation->update(['status' => 'expired']);
-            session()->forget('invitation_token');
-            return redirect()->route('dashboard')->with('error', 'Invitation has expired.');
+        if ($token === '') {
+            return redirect()->route('dashboard');
         }
 
-        $user = auth::User();
-
-        if ($invitation->type === 'workspace') {
-            Workspace::find($invitation->invitable_id)?->members()->syncWithoutDetaching($user->id);
-        } else {
-            Project::find($invitation->invitable_id)?->members()->syncWithoutDetaching($user->id);
-        }
-
-        $invitation->update(['status' => 'accepted']);
-        session()->forget('invitation_token');
+        $this->acceptPendingInvitation($token, $request->user());
+        $request->session()->forget('invitation_token');
 
         return redirect()->route('dashboard')->with('success', 'You have successfully joined!');
     }
 
-    public function reject(Request $request)
+    public function reject(Request $request): RedirectResponse
     {
-        session()->forget('invitation_token');
+        $request->session()->forget('invitation_token');
+
         return redirect()->route('dashboard')->with('info', 'Invitation rejected.');
     }
 
-    public function storeSession(Request $request)
+    public function storeSession(Request $request): RedirectResponse
     {
-        session(['invitation_token' => $request->token]);
+        $validated = $request->validate([
+            'token' => ['required', 'string', 'max:255'],
+            'redirect' => ['nullable', 'in:login,register'],
+        ]);
+        $invitation = Invitation::findByPlainTextToken($validated['token']);
 
-        $redirect = $request->redirect === 'register' ? 'register' : 'login';
-        return redirect()->route($redirect);
+        if (! $invitation?->isUsable()) {
+            return redirect()->route('login')
+                ->with('error', 'Invitation is invalid, expired, or has been revoked.');
+        }
+
+        $request->session()->put('invitation_token', $validated['token']);
+
+        if ($request->user()) {
+            return redirect()->route('invitations.accept', $validated['token']);
+        }
+
+        return redirect()->route($validated['redirect'] ?? 'login');
     }
 
-    public function decline(Request $request)
+    public function decline(Request $request): RedirectResponse
     {
-        $invitation = Invitation::where('token', $request->token)->first();
-        if ($invitation) {
-            $invitation->update(['status' => 'expired']);
+        $validated = $request->validate([
+            'token' => ['required', 'string', 'max:255'],
+        ]);
+        $invitation = Invitation::findByPlainTextToken($validated['token']);
+
+        if ($invitation?->isUsable()) {
+            $invitation->update([
+                'revoked_at' => now(),
+                'pending_key' => null,
+            ]);
         }
+
+        $request->session()->forget('invitation_token');
+
         return redirect()->route('login')->with('info', 'Invitation declined.');
     }
 
-    public function joinViaLink(string $token)
+    public function joinViaLink(string $token): View|RedirectResponse
     {
-        $workspace = Workspace::where('invite_token', $token)->firstOrFail();
+        $workspace = Workspace::query()->where('invite_token', $token)->firstOrFail();
 
-        if (!auth()->check()) {
+        if (! $workspace->hasActiveInviteLink()) {
+            return redirect()->route('login')
+                ->with('error', 'Invite link sudah kedaluwarsa atau dinonaktifkan.');
+        }
+
+        if (! auth()->check()) {
             session(['workspace_invite_token' => $token]);
+
             return redirect()->route('login', ['invite_token' => $token])
                 ->with('info', 'Silakan login terlebih dahulu untuk bergabung.');
         }
@@ -151,39 +189,92 @@ class InvitationController extends Controller
         $user = auth()->user();
 
         if ($workspace->isMember($user) || $workspace->isOwner($user)) {
-            return redirect()->route('workspaces.show', $workspace)
+            return redirect()->route('workspaces.show', $workspace->token)
                 ->with('info', 'Kamu sudah menjadi member workspace ini.');
         }
 
         return view('invitations.confirm', compact('workspace', 'token'));
     }
 
-    public function acceptViaLink(Request $request, string $token)
+    public function acceptViaLink(Request $request, string $token): RedirectResponse
     {
-        $workspace = Workspace::where('token', $token)->firstOrFail();
+        $workspace = DB::transaction(function () use ($request, $token): Workspace {
+            $workspace = Workspace::query()->where('token', $token)->lockForUpdate()->firstOrFail();
 
-        if ($workspace->invite_token !== $request->input('token')) {
-            abort(403, 'Invalid invite token.');
-        }
+            if (! hash_equals((string) $workspace->invite_token, (string) $request->input('token'))
+                || ! $workspace->hasActiveInviteLink()) {
+                abort(403, 'Invalid or expired invite token.');
+            }
 
-        $user = auth()->user();
+            if (! $workspace->isMember($request->user()) && ! $workspace->isOwner($request->user())) {
+                $workspace->members()->attach($request->user()->id, [
+                    'role' => Workspace::ROLE_MEMBER,
+                    'status' => 'active',
+                    'joined_at' => now(),
+                ]);
+            }
 
-        if (!$workspace->isMember($user) && !$workspace->isOwner($user)) {
-            $workspace->members()->syncWithoutDetaching([
-                $user->id => ['role' => 'member']
-            ]);
-        }
+            return $workspace;
+        });
 
-        session()->forget('workspace_invite_token');
+        $request->session()->forget('workspace_invite_token');
 
         return redirect()->route('workspaces.show', $workspace->token)
-            ->with('success', 'Selamat datang di workspace ' . $workspace->name . '!');
+            ->with('success', 'Selamat datang di workspace '.$workspace->name.'!');
     }
 
-    public function declineViaLink(Request $request, string $token)
+    public function declineViaLink(Request $request, string $token): RedirectResponse
     {
-        session()->forget('workspace_invite_token');
+        $request->session()->forget('workspace_invite_token');
+
         return redirect()->route('dashboard')
             ->with('info', 'Kamu menolak undangan workspace.');
+    }
+
+    private function acceptPendingInvitation(string $token, User $user): void
+    {
+        DB::transaction(function () use ($token, $user): void {
+            $invitationId = Invitation::findByPlainTextToken($token)?->id;
+            $invitation = $invitationId
+                ? Invitation::query()->lockForUpdate()->find($invitationId)
+                : null;
+
+            if (! $invitation?->isUsable()) {
+                abort(422, 'Invitation is invalid, expired, or has been revoked.');
+            }
+
+            if (strcasecmp($user->email, $invitation->email) !== 0) {
+                abort(403, 'Gunakan akun dengan email yang sama dengan undangan.');
+            }
+
+            if ($invitation->type === 'workspace') {
+                abort_unless(
+                    array_key_exists($invitation->role, Workspace::INVITABLE_ROLE_LABELS),
+                    422,
+                    'Invitation role is invalid.',
+                );
+
+                Workspace::query()->findOrFail($invitation->invitable_id)
+                    ->members()
+                    ->syncWithoutDetaching([
+                        $user->id => [
+                            'role' => $invitation->role,
+                            'invited_by' => $invitation->invited_by,
+                            'status' => 'active',
+                            'joined_at' => now(),
+                        ],
+                    ]);
+            } else {
+                Project::query()->findOrFail($invitation->invitable_id)
+                    ->members()
+                    ->syncWithoutDetaching($user->id);
+            }
+
+            $invitation->update([
+                'status' => Invitation::STATUS_ACCEPTED,
+                'accepted_at' => now(),
+                'pending_key' => null,
+            ]);
+        });
     }
 }

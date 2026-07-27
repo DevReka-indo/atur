@@ -86,6 +86,10 @@ class GoogleAuthController extends Controller
                 return redirect()->route('workspaces.invite.join', $inviteToken);
             }
 
+            if (session('invitation_token')) {
+                return redirect()->route('invitations.accept', session('invitation_token'));
+            }
+
             return redirect()->intended('/dashboard');
         } catch (\Exception $e) {
             return redirect()->route('login')

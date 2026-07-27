@@ -104,47 +104,10 @@
         document.body.classList.remove('overflow-hidden');
     }
 
-    function toggleProjectMemberDropdown(dropdownId) {
-        document
-            .querySelectorAll('.project-member-dropdown')
-            .forEach((dropdown) => {
-                if (dropdown.id !== dropdownId) {
-                    dropdown.classList.add('hidden');
-                }
-            });
-
-        const target = document.getElementById(dropdownId);
-
-        if (target) {
-            target.classList.toggle('hidden');
-        }
-    }
-
-    function toggleProjectMemberRoleMenu(menuId) {
-        const menu = document.getElementById(menuId);
-
-        if (menu) {
-            menu.classList.toggle('hidden');
-        }
-    }
-
     document.addEventListener('click', (event) => {
         if (!event.target.closest('[data-dropdown]')) {
             document
                 .querySelectorAll('.project-dropdown-menu')
-                .forEach((dropdown) => {
-                    dropdown.classList.add('hidden');
-                });
-        }
-
-        if (
-            !event.target.closest('.project-member-dropdown')
-            && !event.target.closest(
-                'button[onclick^="toggleProjectMemberDropdown"]'
-            )
-        ) {
-            document
-                .querySelectorAll('.project-member-dropdown')
                 .forEach((dropdown) => {
                     dropdown.classList.add('hidden');
                 });

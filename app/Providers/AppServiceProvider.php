@@ -5,7 +5,10 @@ namespace App\Providers;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\UserNotification;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
 
@@ -15,6 +18,22 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        RateLimiter::for('workspace-member-search', function (Request $request): Limit {
+            return Limit::perMinute(30)->by(
+                implode(':', [$request->user()?->id, $request->route('token')]),
+            );
+        });
+        RateLimiter::for('workspace-invitations', function (Request $request): Limit {
+            return Limit::perMinute(10)->by(
+                implode(':', [$request->user()?->id, $request->route('token')]),
+            );
+        });
+        RateLimiter::for('workspace-invitation-resend', function (Request $request): Limit {
+            return Limit::perMinute(5)->by(
+                implode(':', [$request->user()?->id, $request->route('token')]),
+            );
+        });
+
         Gate::before(function (User $user): ?bool {
             return $user->hasRole('super_admin')
                 ? true

@@ -48,6 +48,9 @@
                     <p style="margin:4px 0 0;font-size:16px;font-weight:700;color:#1F2937;">
                         {{ $invitableName }}
                     </p>
+                    <p style="margin:6px 0 0;font-size:12px;color:#6B7280;">
+                        Role: <strong>{{ $roleLabel }}</strong>
+                    </p>
                 </div>
 
                 {{-- Expiry Alert --}}
@@ -83,7 +86,7 @@
                 @endif
 
                 {{-- CTA Button --}}
-                <a href="{{ route('invitations.accept', $invitation->token) }}"
+                <a href="{{ route('invitations.accept', $plainTextToken) }}"
                     style="display:block;text-align:center;padding:16px 24px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#ffffff;border-radius:12px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.01em;margin-bottom:16px;box-shadow:0 4px 16px rgba(99,102,241,0.35);">
                     Accept Invitation
                 </a>
@@ -92,7 +95,7 @@
                 <div style="background:#F9FAFB;border-radius:10px;padding:12px 16px;text-align:center;">
                     <p style="margin:0 0 6px;font-size:11px;color:#9CA3AF;">Or copy this link:</p>
                     <p style="margin:0;font-size:11px;color:#6366f1;word-break:break-all;line-height:1.5;">
-                        {{ route('invitations.accept', $invitation->token) }}
+                        {{ route('invitations.accept', $plainTextToken) }}
                     </p>
                 </div>
 

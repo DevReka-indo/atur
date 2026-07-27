@@ -18,6 +18,7 @@ class AuthenticatedSessionController extends Controller
     {
         return view('auth.login');
     }
+
     /**
      * Handle an incoming authentication request.
      */
@@ -27,10 +28,16 @@ class AuthenticatedSessionController extends Controller
         $request->session()->regenerate();
         if (session('workspace_invite_token')) {
             $token = session('workspace_invite_token');
+
             return redirect()->route('workspaces.invite.join', $token);
         }
+        if (session('invitation_token')) {
+            return redirect()->route('invitations.accept', session('invitation_token'));
+        }
+
         return redirect()->intended(route('dashboard', absolute: false));
     }
+
     /**
      * Destroy an authenticated session.
      */
@@ -48,7 +55,7 @@ class AuthenticatedSessionController extends Controller
             $afterLogoutUrl = config('services.sso.after_logout_url', url('/login'));
 
             if ($ssoLogoutUrl) {
-                return redirect()->away($ssoLogoutUrl . '?' . http_build_query([
+                return redirect()->away($ssoLogoutUrl.'?'.http_build_query([
                     'client_id' => config('services.sso.client_id'),
                     'redirect_uri' => $afterLogoutUrl,
                 ]));

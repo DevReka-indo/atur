@@ -19,6 +19,7 @@ use App\Http\Controllers\RolePermissionController;
 use App\Http\Controllers\TaskController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WorkspaceController;
+use App\Http\Controllers\WorkspaceInvitationController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
@@ -185,6 +186,21 @@ Route::middleware('auth')->group(function () {
     Route::post('/workspaces/{token}/members', [WorkspaceController::class, 'addMember'])
         ->name('workspaces.members.store');
 
+    Route::get('/workspaces/{token}/member-candidates', [WorkspaceInvitationController::class, 'candidates'])
+        ->middleware('throttle:workspace-member-search')
+        ->name('workspaces.members.candidates');
+
+    Route::post('/workspaces/{token}/invitations', [WorkspaceInvitationController::class, 'store'])
+        ->middleware('throttle:workspace-invitations')
+        ->name('workspaces.invitations.store');
+
+    Route::post('/workspaces/{token}/invitations/{invitation}/resend', [WorkspaceInvitationController::class, 'resend'])
+        ->middleware('throttle:workspace-invitation-resend')
+        ->name('workspaces.invitations.resend');
+
+    Route::delete('/workspaces/{token}/invitations/{invitation}', [WorkspaceInvitationController::class, 'revoke'])
+        ->name('workspaces.invitations.revoke');
+
     Route::patch('/workspaces/{token}/members/{user}', [WorkspaceController::class, 'updateMemberRole'])
         ->name('workspaces.members.update');
 
@@ -205,6 +221,9 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/workspaces/{token}/invite-link/reset', [WorkspaceController::class, 'resetInviteLink'])
         ->name('workspaces.invite.reset');
+
+    Route::delete('/workspaces/{token}/invite-link', [WorkspaceController::class, 'revokeInviteLink'])
+        ->name('workspaces.invite.revoke');
 
     Route::post('/workspaces/{token}/invite-link/accept', [InvitationController::class, 'acceptViaLink'])
         ->name('workspaces.invite.accept');

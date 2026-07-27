@@ -14,7 +14,7 @@
     @if ($canManageMembers)
         <div id="action-invite-member" style="display: none;">
             <button type="button"
-                onclick="document.getElementById('inviteModal').classList.remove('hidden')"
+                data-open-workspace-invite
                 class="group inline-flex items-center px-5 py-2.5 text-white font-medium rounded-xl
                     bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-500/30
                     transition-all duration-300">

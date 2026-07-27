@@ -519,10 +519,8 @@
     @if (session('invitation_token'))
         @php
             $invToken = session('invitation_token');
-            $invData = \App\Models\Invitation::with('inviter')
-                ->where('token', $invToken)
-                ->where('status', 'pending')
-                ->first();
+            $invData = \App\Models\Invitation::findByPlainTextToken($invToken);
+            $invData = $invData?->isUsable() ? $invData->load('inviter') : null;
             $invitable = $invData
                 ? ($invData->type === 'workspace'
                     ? \App\Models\Workspace::find($invData->invitable_id)

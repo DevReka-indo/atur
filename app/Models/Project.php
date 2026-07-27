@@ -13,6 +13,18 @@ class Project extends Model
 {
     use HasFactory;
 
+    public const ROLE_MANAGER = 'manager';
+
+    public const ROLE_MEMBER = 'member';
+
+    public const ROLE_VIEWER = 'viewer';
+
+    public const ROLE_LABELS = [
+        self::ROLE_MANAGER => 'Project Admin',
+        self::ROLE_MEMBER => 'Member',
+        self::ROLE_VIEWER => 'Viewer',
+    ];
+
     protected $fillable = [
         'workspace_id',
         'project_template_id',
@@ -150,6 +162,19 @@ class Project extends Model
             ->first();
 
         return $member?->pivot?->role;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public static function roleLabels(): array
+    {
+        return self::ROLE_LABELS;
+    }
+
+    public static function roleLabel(string $role): string
+    {
+        return self::ROLE_LABELS[$role] ?? ucfirst($role);
     }
 
     public function canContribute(User $user): bool

@@ -15,6 +15,8 @@ class WorkspaceMember extends Model
         'workspace_id',
         'user_id',
         'role',
+        'invited_by',
+        'status',
         'joined_at',
     ];
 

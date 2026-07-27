@@ -109,7 +109,7 @@
                 <p class="text-gray-600 text-sm leading-relaxed mb-5">
                     Kamu diundang untuk bergabung ke workspace
                     <span class="font-bold text-gray-900">"{{ $workspace->name }}"</span>
-                    sebagai <span class="font-semibold text-indigo-600">Member</span>.
+                    sebagai <span class="font-semibold text-indigo-600">{{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_MEMBER) }}</span>.
                 </p>
 
                 {{-- Workspace Detail Card --}}
@@ -129,7 +129,8 @@
                     </div>
                     <div class="flex-shrink-0">
                         <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
-                            <i class="fa-solid fa-user mr-1"></i> Member
+                            <i class="fa-solid fa-user mr-1"></i>
+                            {{ \App\Models\Workspace::roleLabel(\App\Models\Workspace::ROLE_MEMBER) }}
                         </span>
                     </div>
                 </div>
