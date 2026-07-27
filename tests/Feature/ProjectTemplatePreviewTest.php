@@ -186,13 +186,14 @@ class ProjectTemplatePreviewTest extends TestCase
             ->assertOk()
             ->assertViewHas('selectedProjectTemplateId', $queryTemplate->id)
             ->assertSee('data-preview-url=', false)
-            ->assertDontSee('data-template=', false);
+            ->assertSee('data-template-selected-state', false);
 
         $this->actingAs($user)
             ->withSession(['_old_input' => ['project_template_id' => $oldTemplate->id]])
             ->get(route('projects.create', ['project_template_id' => $queryTemplate->id]))
             ->assertOk()
-            ->assertViewHas('selectedProjectTemplateId', $oldTemplate->id);
+            ->assertViewHas('selectedProjectTemplateId', $oldTemplate->id)
+            ->assertSee('value="'.$oldTemplate->id.'"', false);
 
         $queryTemplate->update(['is_active' => false]);
 
@@ -206,6 +207,99 @@ class ProjectTemplatePreviewTest extends TestCase
                     fn (array $template): bool => $template['id'] === $queryTemplate->id
                 )
             );
+    }
+
+    public function test_create_page_renders_the_card_picker_with_active_template_metadata_only(): void
+    {
+        $user = User::factory()->member()->create();
+        [$activeTemplate] = $this->activeTemplate();
+        [$inactiveTemplate] = $this->activeTemplate();
+        [$deletedTemplate] = $this->activeTemplate();
+        $activeTemplate->update(['name' => 'Active Picker Template']);
+        $inactiveTemplate->update([
+            'name' => 'Inactive Picker Template',
+            'is_active' => false,
+        ]);
+        $deletedTemplate->update(['name' => 'Deleted Picker Template']);
+        $deletedTemplate->delete();
+
+        $response = $this->actingAs($user)->get(route('projects.create'));
+
+        $this->assertDoesNotMatchRegularExpression(
+            '/<select\b[^>]*\bname=["\']project_template_id["\']/i',
+            $response->getContent(),
+        );
+
+        $response
+            ->assertOk()
+            ->assertSee('Browse Templates')
+            ->assertSee('data-template-picker-modal', false)
+            ->assertSee('name="project_template_id"', false)
+            ->assertSee('type="hidden"', false)
+            ->assertSee($activeTemplate->name)
+            ->assertSee($activeTemplate->category->name)
+            ->assertSee('data-template-tasks="7"', false)
+            ->assertSee('data-template-duration="12"', false)
+            ->assertSee('data-template-version="'.$activeTemplate->version.'"', false)
+            ->assertDontSee($inactiveTemplate->name)
+            ->assertDontSee($deletedTemplate->name);
+    }
+
+    public function test_create_page_uses_only_the_new_create_partials(): void
+    {
+        $viewRoot = resource_path('views/projects');
+        $createView = file_get_contents($viewRoot.'/create.blade.php');
+        $partialNames = [
+            '_form-errors',
+            '_project-information',
+            '_template-selector',
+            '_template-picker-modal',
+            '_template-preview',
+            '_project-timeline',
+            '_project-description',
+            '_form-actions',
+        ];
+
+        foreach ($partialNames as $partialName) {
+            $this->assertStringContainsString(
+                "projects.partials.create.{$partialName}",
+                $createView,
+            );
+            $this->assertFileExists($viewRoot."/partials/create/{$partialName}.blade.php");
+        }
+
+        $this->assertFileDoesNotExist($viewRoot.'/partials/_template-selector.blade.php');
+        $this->assertFileDoesNotExist($viewRoot.'/partials/_template-preview.blade.php');
+        $this->assertStringNotContainsString('projects.partials._template', $createView);
+    }
+
+    public function test_create_page_template_summary_queries_do_not_grow_per_template(): void
+    {
+        $user = User::factory()->member()->create();
+        $this->activeTemplate();
+
+        $user->unsetRelation('workspaces');
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->actingAs($user)->get(route('projects.create'))->assertOk();
+        $singleTemplateQueryCount = collect(DB::getQueryLog())
+            ->filter(fn (array $query): bool => str_contains($query['query'], 'project_template'))
+            ->count();
+        DB::disableQueryLog();
+
+        $this->activeTemplate();
+        $this->activeTemplate();
+
+        $user->unsetRelation('workspaces');
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->actingAs($user)->get(route('projects.create'))->assertOk();
+        $multipleTemplateQueryCount = collect(DB::getQueryLog())
+            ->filter(fn (array $query): bool => str_contains($query['query'], 'project_template'))
+            ->count();
+        DB::disableQueryLog();
+
+        $this->assertSame($singleTemplateQueryCount, $multipleTemplateQueryCount);
     }
 
     public function test_preview_dates_match_applied_runtime_tasks_and_existing_creation_flows_remain_intact(): void

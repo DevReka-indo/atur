@@ -27,12 +27,12 @@ const formatNumber = (value) => new Intl.NumberFormat('id-ID', {
 }).format(value);
 
 const initializeProjectTemplatePreview = () => {
-    const templateSelect = document.getElementById('project_template_id');
+    const templateInput = document.getElementById('project_template_id');
     const preview = document.querySelector('[data-project-template-preview]');
     const startDateInput = document.getElementById('start_date');
     const dueDateInput = document.getElementById('due_date');
 
-    if (!templateSelect || !preview || !startDateInput || !dueDateInput) {
+    if (!templateInput || !preview || !startDateInput || !dueDateInput) {
         return;
     }
 
@@ -46,14 +46,6 @@ const initializeProjectTemplatePreview = () => {
         states.forEach((element, name) => {
             element.classList.toggle('hidden', name !== stateName);
         });
-    };
-
-    const updateMinimumDueDate = () => {
-        if (startDateInput.value) {
-            dueDateInput.min = startDateInput.value;
-        } else {
-            dueDateInput.removeAttribute('min');
-        }
     };
 
     const appendTaskNode = (task, container) => {
@@ -174,15 +166,14 @@ const initializeProjectTemplatePreview = () => {
         activeRequest?.abort();
         activeRequest = null;
 
-        const selectedOption = templateSelect.options[templateSelect.selectedIndex];
-        if (!selectedOption?.dataset.previewUrl) {
+        if (!templateInput.value || !templateInput.dataset.previewUrl) {
             showState('empty');
             return;
         }
 
         const requestController = new AbortController();
         activeRequest = requestController;
-        const previewUrl = new URL(selectedOption.dataset.previewUrl, window.location.origin);
+        const previewUrl = new URL(templateInput.dataset.previewUrl, window.location.origin);
 
         if (startDateInput.value) {
             previewUrl.searchParams.set('start_date', startDateInput.value);
@@ -228,14 +219,10 @@ const initializeProjectTemplatePreview = () => {
         }
     };
 
-    templateSelect.addEventListener('change', loadPreview);
-    startDateInput.addEventListener('change', () => {
-        updateMinimumDueDate();
-        loadPreview();
-    });
+    templateInput.addEventListener('change', loadPreview);
+    startDateInput.addEventListener('change', loadPreview);
     dueDateInput.addEventListener('change', loadPreview);
 
-    updateMinimumDueDate();
     loadPreview();
 };
 

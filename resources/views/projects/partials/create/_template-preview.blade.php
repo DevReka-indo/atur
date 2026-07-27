@@ -1,10 +1,10 @@
-<section class="lg:col-span-2" aria-labelledby="template-preview-title" data-project-template-preview>
+<section aria-labelledby="template-preview-title" data-project-template-preview>
     <div class="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
         <div class="border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
             <div class="flex items-center gap-3">
-                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                {{-- <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
                     <i class="fa-solid fa-diagram-project"></i>
-                </span>
+                </span> --}}
                 <div>
                     <h2 id="template-preview-title" class="text-sm font-semibold text-slate-900">Preview Project Template</h2>
                     <p class="text-xs text-slate-500">Preview bersifat read-only dan tidak mengubah tanggal pada form.</p>
@@ -18,9 +18,7 @@
                     <i class="fa-solid fa-list-check mt-0.5 text-slate-400"></i>
                     <div>
                         <p class="font-semibold text-slate-800">Tanpa Template</p>
-                        <p class="mt-1 text-sm leading-6 text-slate-600">
-                            Enam default task tetap dibuat seperti flow sebelumnya.
-                        </p>
+                        <p class="mt-1 text-sm leading-6 text-slate-600">Enam default task tetap dibuat seperti flow sebelumnya.</p>
                     </div>
                 </div>
             </div>

@@ -158,7 +158,9 @@ class ProjectTemplateGalleryTest extends TestCase
             ->assertRedirect($galleryUrl)
             ->assertSessionHasErrors('due_date');
 
-        $this->get($galleryUrl)
+        $response = $this->get($galleryUrl);
+
+        $response
             ->assertOk()
             ->assertSee('data-reopen="true"', false)
             ->assertSee('value="'.$template->id.'"', false)
@@ -167,9 +169,13 @@ class ProjectTemplateGalleryTest extends TestCase
             ->assertSee('value="2026-08-20"', false)
             ->assertSee('value="2026-08-10"', false)
             ->assertSee('min="2026-08-20"', false)
-            ->assertSee('value="active" selected', false)
+            ->assertSee('name="status"', false)
             ->assertSee('The due date field must be a date after or equal to start date.');
 
+        $this->assertMatchesRegularExpression(
+            '/<option\b(?=[^>]*\bvalue\s*=\s*["\']active["\'])(?=[^>]*\bselected(?:\s*=\s*["\']selected["\'])?)[^>]*>/i',
+            $response->getContent(),
+        );
         $this->assertDatabaseCount('projects', 0);
     }
 

@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Services\ProjectProgressService;
 use App\Services\ProjectTemplateApplicationService;
+use App\Services\ProjectTemplates\ProjectTemplatePreviewService;
 use App\Services\TaskGanttService;
 use App\Services\TaskHierarchyService;
 use Illuminate\Http\RedirectResponse;
@@ -58,31 +59,60 @@ class ProjectController extends Controller
         return view('projects.index', compact('projects', 'view'));
     }
 
-    public function create(Request $request): View
+    public function create(Request $request, ProjectTemplatePreviewService $previewService): View
     {
         $workspaces = Auth::user()->workspaces;
-        $projectTemplates = ProjectTemplate::query()
+        $templates = ProjectTemplate::query()
             ->where('is_active', true)
             ->whereHas('category', fn ($query) => $query->where('is_active', true))
             ->with('category:id,name')
             ->orderBy('name')
-            ->get(['id', 'project_template_category_id', 'name', 'version'])
-            ->map(fn (ProjectTemplate $template): array => [
+            ->get([
+                'id',
+                'project_template_category_id',
+                'name',
+                'description',
+                'version',
+            ]);
+        $summaries = $previewService->summaries($templates);
+        $projectTemplates = $templates->map(function (ProjectTemplate $template) use ($summaries): array {
+            $summary = $summaries->get($template->id);
+
+            return [
                 'id' => $template->id,
                 'name' => $template->name,
+                'description' => $template->description,
+                'category_id' => $template->category->id,
                 'category' => $template->category->name,
                 'version' => $template->version,
-            ]);
+                'tasks_count' => $summary['tasks_count'],
+                'hierarchy_levels' => $summary['hierarchy_levels'],
+                'total_leaf_weight' => $summary['total_leaf_weight'],
+                'duration_days' => $summary['duration_days'],
+                'preview_url' => route('project-templates.preview', ['projectTemplate' => $template->id]),
+            ];
+        });
+        $projectTemplateCategories = $projectTemplates
+            ->map(fn (array $template): array => [
+                'id' => $template['category_id'],
+                'name' => $template['category'],
+            ])
+            ->unique('id')
+            ->sortBy('name')
+            ->values();
         $requestedTemplateId = old('project_template_id', $request->query('project_template_id'));
         $selectedProjectTemplateId = is_numeric($requestedTemplateId)
             && $projectTemplates->contains(fn (array $template): bool => $template['id'] === (int) $requestedTemplateId)
                 ? (int) $requestedTemplateId
                 : null;
+        $selectedProjectTemplate = $projectTemplates->firstWhere('id', $selectedProjectTemplateId);
 
         return view('projects.create', compact(
             'workspaces',
             'projectTemplates',
+            'projectTemplateCategories',
             'selectedProjectTemplateId',
+            'selectedProjectTemplate',
         ));
     }
 
