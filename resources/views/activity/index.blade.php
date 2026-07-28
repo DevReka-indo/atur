@@ -62,30 +62,6 @@
                 {{-- Rows --}}
                 @forelse ($activities as $log)
                     @php
-                        $actionMap = [
-                            'created' => ['icon' => 'fa-plus', 'bg' => 'bg-emerald-100', 'color' => 'text-emerald-600'],
-                            'updated' => ['icon' => 'fa-pen', 'bg' => 'bg-amber-50', 'color' => 'text-amber-500'],
-                            'deleted' => [
-                                'icon' => 'fa-regular fa-trash-can',
-                                'bg' => 'bg-red-50',
-                                'color' => 'text-red-500',
-                            ],
-                            'status_changed' => [
-                                'icon' => 'fa-arrow-right-arrow-left',
-                                'bg' => 'bg-purple-100',
-                                'color' => 'text-purple-600',
-                            ],
-                            'assigned' => [
-                                'icon' => 'fa-user-plus',
-                                'bg' => 'bg-amber-100',
-                                'color' => 'text-amber-600',
-                            ],
-                            'commented' => [
-                                'icon' => 'fa-regular fa-comments',
-                                'bg' => 'bg-sky-100',
-                                'color' => 'text-sky-600',
-                            ],
-                        ];
                         $entityMap = [
                             'task' => ['label' => 'Task', 'class' => 'bg-purple-100 text-purple-700'],
                             'project' => ['label' => 'Project', 'class' => 'bg-blue-100 text-blue-700'],
@@ -94,11 +70,7 @@
                             'comment' => ['label' => 'Komentar', 'class' => 'bg-green-100 text-green-700'],
                             'attachment' => ['label' => 'Attachment', 'class' => 'bg-amber-100 text-amber-700'],
                         ];
-                        $style = $actionMap[$log->action] ?? [
-                            'icon' => 'fa-circle-info',
-                            'bg' => 'bg-gray-100',
-                            'color' => 'text-gray-500',
-                        ];
+                        $style = $log->presentation();
                         $entity = $entityMap[$log->entity_type] ?? [
                             'label' => ucfirst($log->entity_type),
                             'class' => 'bg-gray-100 text-gray-600',
@@ -107,6 +79,9 @@
                         $initial = strtoupper(
                             implode('', array_map(fn($w) => $w[0], array_slice(explode(' ', $name), 0, 2))),
                         );
+                        $canViewInvitationEmail =
+                            $log->entity_type !== 'workspace' ||
+                            $managedWorkspaceIds->contains((int) $log->entity_id);
                     @endphp
 
                     @if ($log->entity_url)
@@ -128,7 +103,7 @@
                         <p class="text-sm text-gray-800">
                             <span class="font-semibold text-gray-900">{{ $name }}</span>
                             <span class="text-gray-400 mx-1">·</span>
-                            <span class="text-gray-600">{{ $log->description }}</span>
+                            <span class="text-gray-600">{{ $log->displayDescription($canViewInvitationEmail) }}</span>
                         </p>
                         <div class="flex items-center gap-2 mt-1.5 flex-wrap">
                             <span class="text-xs text-gray-400 flex items-center gap-1">

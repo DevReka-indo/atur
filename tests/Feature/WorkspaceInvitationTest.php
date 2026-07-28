@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Mail\InvitationMail;
+use App\Models\ActivityLog;
 use App\Models\Invitation;
 use App\Models\Project;
 use App\Models\User;
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Schema;
+use RuntimeException;
 use Tests\Support\CreatesProjectTemplateTestSchema;
 use Tests\TestCase;
 
@@ -51,6 +53,10 @@ class WorkspaceInvitationTest extends TestCase
             $table->timestamp('last_sent_at')->nullable();
             $table->timestamps();
             $table->index(['type', 'invitable_id', 'status']);
+        });
+        Schema::create('project_threads', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('project_id');
         });
 
         RateLimiter::clear('workspace-member-search');
@@ -502,6 +508,261 @@ class WorkspaceInvitationTest extends TestCase
             ->assertSessionHasErrors('member');
     }
 
+    public function test_registered_member_and_email_invitation_write_structured_activity_without_tokens(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $candidate = User::factory()->create(['name' => 'Andi Registered']);
+
+        $this->actingAs($fixture['owner'])
+            ->post(route('workspaces.invitations.store', $fixture['workspace']->token), [
+                'user_id' => $candidate->id,
+                'role' => Workspace::ROLE_ADMIN,
+            ])
+            ->assertRedirect();
+
+        $memberLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_MEMBER_ADDED);
+        $this->assertSame($fixture['owner']->id, $memberLog->user_id);
+        $this->assertSame($fixture['workspace']->id, $memberLog->entity_id);
+        $this->assertSame($candidate->id, $memberLog->new_value['target_user_id']);
+        $this->assertSame('Workspace Admin', $memberLog->new_value['role_label']);
+        $this->assertSame('registered_user', $memberLog->new_value['source']);
+        $this->assertStringContainsString('Workspace Admin', $memberLog->description);
+
+        [$invitation, $plainTextToken] = $this->createEmailInvitation(
+            $fixture,
+            'audit-email@example.test',
+        );
+        $invitationLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_INVITATION_SENT);
+        $serializedLog = json_encode($invitationLog->toArray(), JSON_THROW_ON_ERROR);
+
+        $this->assertSame($invitation->id, $invitationLog->new_value['invitation_id']);
+        $this->assertSame('audit-email@example.test', $invitationLog->new_value['target_email']);
+        $this->assertSame('Workspace Member', $invitationLog->new_value['role_label']);
+        $this->assertSame('email_invitation', $invitationLog->new_value['source']);
+        $this->assertStringNotContainsString($plainTextToken, $serializedLog);
+        $this->assertStringNotContainsString($invitation->getRawOriginal('token'), $serializedLog);
+        $this->assertStringContainsString(
+            'Workspace Owner',
+            ActivityLog::describeWorkspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_MEMBER_ADDED,
+                [
+                    'target_name' => 'Owner Label',
+                    'role_label' => Workspace::roleLabel(Workspace::ROLE_OWNER),
+                ],
+            ),
+        );
+    }
+
+    public function test_resend_and_revoke_write_machine_readable_activity(): void
+    {
+        $fixture = $this->workspaceFixture();
+        [$invitation] = $this->createEmailInvitation($fixture, 'resend-audit@example.test');
+
+        $this->actingAs($fixture['admin'])
+            ->post(route('workspaces.invitations.resend', [
+                $fixture['workspace']->token,
+                $invitation,
+            ]))
+            ->assertRedirect();
+
+        $resentLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_INVITATION_RESENT);
+        $this->assertSame($fixture['admin']->id, $resentLog->user_id);
+        $this->assertSame($invitation->id, $resentLog->new_value['invitation_id']);
+        $this->assertSame(Invitation::STATUS_PENDING, $resentLog->new_value['status']);
+
+        $this->actingAs($fixture['owner'])
+            ->delete(route('workspaces.invitations.revoke', [
+                $fixture['workspace']->token,
+                $invitation,
+            ]))
+            ->assertRedirect();
+
+        $revokedLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_INVITATION_REVOKED);
+        $this->assertSame('revoked', $revokedLog->new_value['status']);
+        $this->assertSame('email_invitation', $revokedLog->new_value['source']);
+    }
+
+    public function test_accept_invitation_writes_activity_with_recipient_as_actor(): void
+    {
+        $fixture = $this->workspaceFixture();
+        [$invitation, $plainTextToken] = $this->createEmailInvitation(
+            $fixture,
+            'accepted-audit@example.test',
+            Workspace::ROLE_ADMIN,
+        );
+        $invitee = User::factory()->create([
+            'name' => 'Accepted User',
+            'email' => 'accepted-audit@example.test',
+        ]);
+
+        $this->actingAs($invitee)
+            ->withSession(['invitation_token' => $plainTextToken])
+            ->post(route('invitations.join'))
+            ->assertRedirect();
+
+        $log = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_INVITATION_ACCEPTED);
+        $this->assertSame($invitee->id, $log->user_id);
+        $this->assertSame($invitee->id, $log->new_value['target_user_id']);
+        $this->assertSame($fixture['owner']->id, $log->new_value['inviter_id']);
+        $this->assertSame($invitation->id, $log->new_value['invitation_id']);
+        $this->assertSame('Workspace Admin', $log->new_value['role_label']);
+        $this->assertStringContainsString('menerima undangan', $log->displayDescription());
+    }
+
+    public function test_reusable_link_events_are_logged_without_link_token(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $invitee = User::factory()->create(['name' => 'Reusable Link User']);
+
+        $this->actingAs($fixture['owner'])
+            ->post(route('workspaces.invite.generate', $fixture['workspace']->token))
+            ->assertRedirect();
+        $workspace = $fixture['workspace']->fresh();
+        $firstToken = $workspace->invite_token;
+
+        $generatedLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_INVITE_LINK_REGENERATED);
+        $this->assertSame('reusable_link', $generatedLog->new_value['source']);
+        $this->assertSame('Workspace Member', $generatedLog->new_value['role_label']);
+        $this->assertNotNull($generatedLog->new_value['expires_at']);
+
+        $this->actingAs($invitee)
+            ->post(route('workspaces.invite.accept', $workspace->token), [
+                'token' => $firstToken,
+            ])
+            ->assertRedirect();
+
+        $joinedLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_JOINED_VIA_INVITE_LINK);
+        $this->assertSame($invitee->id, $joinedLog->user_id);
+        $this->assertSame($invitee->id, $joinedLog->new_value['target_user_id']);
+        $this->assertSame(Workspace::ROLE_MEMBER, $joinedLog->new_value['role']);
+
+        $this->actingAs($fixture['owner'])
+            ->post(route('workspaces.invite.reset', $workspace->token))
+            ->assertRedirect();
+        $this->assertSame(
+            2,
+            ActivityLog::query()
+                ->where('new_value->event', ActivityLog::EVENT_WORKSPACE_INVITE_LINK_REGENERATED)
+                ->count(),
+        );
+
+        $activeToken = $workspace->fresh()->invite_token;
+        $this->actingAs($fixture['owner'])
+            ->delete(route('workspaces.invite.revoke', $workspace->token))
+            ->assertRedirect();
+        $disabledLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_INVITE_LINK_DISABLED);
+        $this->assertSame('disabled', $disabledLog->new_value['status']);
+
+        $serializedLogs = ActivityLog::query()->get()->toJson();
+        $this->assertStringNotContainsString($firstToken, $serializedLogs);
+        $this->assertStringNotContainsString($activeToken, $serializedLogs);
+    }
+
+    public function test_role_change_and_member_removal_log_old_and_new_role(): void
+    {
+        $fixture = $this->workspaceFixture();
+
+        $this->actingAs($fixture['owner'])
+            ->patch(route('workspaces.members.update', [
+                $fixture['workspace']->token,
+                $fixture['member'],
+            ]), ['role' => Workspace::ROLE_ADMIN])
+            ->assertRedirect();
+
+        $roleLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_MEMBER_ROLE_CHANGED);
+        $this->assertSame(Workspace::ROLE_MEMBER, $roleLog->old_value['role']);
+        $this->assertSame(Workspace::ROLE_ADMIN, $roleLog->new_value['role']);
+        $this->assertSame('Workspace Member', $roleLog->new_value['old_role_label']);
+        $this->assertSame('Workspace Admin', $roleLog->new_value['role_label']);
+
+        $this->actingAs($fixture['owner'])
+            ->delete(route('workspaces.members.destroy', [
+                $fixture['workspace']->token,
+                $fixture['member'],
+            ]))
+            ->assertRedirect();
+
+        $removedLog = $this->workspaceEvent(ActivityLog::EVENT_WORKSPACE_MEMBER_REMOVED);
+        $this->assertSame($fixture['member']->id, $removedLog->new_value['target_user_id']);
+        $this->assertSame('removed', $removedLog->new_value['status']);
+    }
+
+    public function test_activity_log_failure_rolls_back_registered_member_addition(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $candidate = User::factory()->create();
+
+        ActivityLog::creating(function (): never {
+            throw new RuntimeException('Forced invitation activity failure.');
+        });
+        $this->withoutExceptionHandling();
+
+        try {
+            $this->actingAs($fixture['owner'])
+                ->post(route('workspaces.invitations.store', $fixture['workspace']->token), [
+                    'user_id' => $candidate->id,
+                    'role' => Workspace::ROLE_MEMBER,
+                ]);
+            $this->fail('Expected the activity log failure to be thrown.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('Forced invitation activity failure.', $exception->getMessage());
+        } finally {
+            ActivityLog::flushEventListeners();
+        }
+
+        $this->assertFalse($fixture['workspace']->members()->whereKey($candidate->id)->exists());
+        $this->assertSame(0, ActivityLog::query()->count());
+    }
+
+    public function test_workspace_activity_visibility_masks_email_and_excludes_outsiders(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $outsider = User::factory()->create();
+        $this->createEmailInvitation($fixture, 'private-invite@example.test');
+
+        $this->actingAs($fixture['owner'])
+            ->get(route('activity.log'))
+            ->assertOk()
+            ->assertSee('private-invite@example.test');
+
+        $this->actingAs($fixture['admin'])
+            ->get(route('activity.log'))
+            ->assertOk()
+            ->assertSee('private-invite@example.test');
+
+        $this->actingAs($fixture['member'])
+            ->get(route('activity.log'))
+            ->assertOk()
+            ->assertSee('p***@example.test')
+            ->assertDontSee('private-invite@example.test');
+
+        $this->actingAs($outsider)
+            ->get(route('activity.log'))
+            ->assertOk()
+            ->assertDontSee('private-invite@example.test')
+            ->assertDontSee('p***@example.test');
+    }
+
+    public function test_project_activity_presentation_remains_unchanged(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $project = Project::factory()
+            ->for($fixture['workspace'])
+            ->for($fixture['owner'], 'creator')
+            ->create();
+        $log = ActivityLog::create([
+            'user_id' => $fixture['owner']->id,
+            'action' => 'created',
+            'entity_type' => 'project',
+            'entity_id' => $project->id,
+            'description' => 'Membuat project regression.',
+        ]);
+
+        $this->assertNull($log->event);
+        $this->assertSame('Membuat project regression.', $log->displayDescription());
+        $this->assertSame('fa-plus', $log->presentation()['icon']);
+    }
+
     public function test_invitation_ui_uses_partials_central_roles_and_accessible_safe_javascript(): void
     {
         $root = resource_path('views/workspaces/partials/members');
@@ -584,5 +845,13 @@ class WorkspaceInvitationTest extends TestCase
             Invitation::query()->where('email', strtolower($email))->sole(),
             $plainTextToken,
         ];
+    }
+
+    private function workspaceEvent(string $event): ActivityLog
+    {
+        return ActivityLog::query()
+            ->where('new_value->event', $event)
+            ->latest('id')
+            ->firstOrFail();
     }
 }

@@ -73,18 +73,22 @@ class WorkspaceInvitationService
                 'invited_by' => $actor->id,
             ]);
 
-            ActivityLog::create([
-                'user_id' => $actor->id,
-                'action' => 'updated',
-                'entity_type' => 'workspace',
-                'entity_id' => $workspace->id,
-                'description' => sprintf(
-                    'Mengirim ulang undangan %s sebagai %s ke workspace %s.',
-                    $lockedInvitation->email,
-                    Workspace::roleLabel($lockedInvitation->role),
-                    $workspace->name,
-                ),
-            ]);
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_INVITATION_RESENT,
+                $workspace,
+                $actor,
+                [
+                    'invitation_id' => $lockedInvitation->id,
+                    'target_user_id' => null,
+                    'target_email' => $lockedInvitation->email,
+                    'role' => $lockedInvitation->role,
+                    'role_label' => Workspace::roleLabel($lockedInvitation->role),
+                    'source' => 'email_invitation',
+                    'status' => Invitation::STATUS_PENDING,
+                    'expires_at' => $lockedInvitation->expires_at?->toIso8601String(),
+                    'inviter_id' => $actor->id,
+                ],
+            );
 
             return $lockedInvitation->fresh('inviter');
         });
@@ -109,17 +113,21 @@ class WorkspaceInvitationService
                 'pending_key' => null,
             ]);
 
-            ActivityLog::create([
-                'user_id' => $actor->id,
-                'action' => 'updated',
-                'entity_type' => 'workspace',
-                'entity_id' => $workspace->id,
-                'description' => sprintf(
-                    'Membatalkan undangan %s ke workspace %s.',
-                    $lockedInvitation->email,
-                    $workspace->name,
-                ),
-            ]);
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_INVITATION_REVOKED,
+                $workspace,
+                $actor,
+                [
+                    'invitation_id' => $lockedInvitation->id,
+                    'target_user_id' => null,
+                    'target_email' => $lockedInvitation->email,
+                    'role' => $lockedInvitation->role,
+                    'role_label' => Workspace::roleLabel($lockedInvitation->role),
+                    'source' => 'email_invitation',
+                    'status' => 'revoked',
+                    'inviter_id' => $lockedInvitation->invited_by,
+                ],
+            );
         });
     }
 
@@ -155,22 +163,21 @@ class WorkspaceInvitationService
                     'pending_key' => null,
                 ]);
 
-            ActivityLog::create([
-                'user_id' => $actor->id,
-                'action' => 'assigned',
-                'entity_type' => 'workspace',
-                'entity_id' => $workspace->id,
-                'description' => sprintf(
-                    'Menambahkan %s sebagai %s ke workspace %s.',
-                    $user->name,
-                    Workspace::roleLabel($role),
-                    $workspace->name,
-                ),
-                'new_value' => [
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_MEMBER_ADDED,
+                $workspace,
+                $actor,
+                [
                     'target_user_id' => $user->id,
+                    'target_name' => $user->name,
+                    'target_email' => $user->email,
                     'role' => $role,
+                    'role_label' => Workspace::roleLabel($role),
+                    'invitation_id' => null,
+                    'source' => 'registered_user',
+                    'status' => 'active',
                 ],
-            ]);
+            );
         });
     }
 
@@ -228,22 +235,22 @@ class WorkspaceInvitationService
                 'last_sent_at' => now(),
             ]);
 
-            ActivityLog::create([
-                'user_id' => $actor->id,
-                'action' => 'assigned',
-                'entity_type' => 'workspace',
-                'entity_id' => $workspace->id,
-                'description' => sprintf(
-                    'Mengundang %s sebagai %s ke workspace %s.',
-                    $email,
-                    Workspace::roleLabel($role),
-                    $workspace->name,
-                ),
-                'new_value' => [
-                    'email' => $email,
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_INVITATION_SENT,
+                $workspace,
+                $actor,
+                [
+                    'invitation_id' => $invitation->id,
+                    'target_user_id' => null,
+                    'target_email' => $email,
                     'role' => $role,
+                    'role_label' => Workspace::roleLabel($role),
+                    'source' => 'email_invitation',
+                    'status' => Invitation::STATUS_PENDING,
+                    'expires_at' => $invitation->expires_at?->toIso8601String(),
+                    'inviter_id' => $actor->id,
                 ],
-            ]);
+            );
 
             return $invitation->load('inviter');
         });

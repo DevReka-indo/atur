@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Mail\InvitationMail;
+use App\Models\ActivityLog;
 use App\Models\Invitation;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Services\ActivityLogService;
 use App\Services\WorkspaceInvitationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -212,6 +214,22 @@ class InvitationController extends Controller
                     'status' => 'active',
                     'joined_at' => now(),
                 ]);
+
+                ActivityLogService::workspaceEvent(
+                    ActivityLog::EVENT_WORKSPACE_JOINED_VIA_INVITE_LINK,
+                    $workspace,
+                    $request->user(),
+                    [
+                        'invitation_id' => null,
+                        'target_user_id' => $request->user()->id,
+                        'target_name' => $request->user()->name,
+                        'target_email' => $request->user()->email,
+                        'role' => Workspace::ROLE_MEMBER,
+                        'role_label' => Workspace::roleLabel(Workspace::ROLE_MEMBER),
+                        'source' => 'reusable_link',
+                        'status' => 'active',
+                    ],
+                );
             }
 
             return $workspace;
@@ -254,8 +272,8 @@ class InvitationController extends Controller
                     'Invitation role is invalid.',
                 );
 
-                Workspace::query()->findOrFail($invitation->invitable_id)
-                    ->members()
+                $workspace = Workspace::query()->findOrFail($invitation->invitable_id);
+                $workspace->members()
                     ->syncWithoutDetaching([
                         $user->id => [
                             'role' => $invitation->role,
@@ -275,6 +293,25 @@ class InvitationController extends Controller
                 'accepted_at' => now(),
                 'pending_key' => null,
             ]);
+
+            if ($invitation->type === 'workspace') {
+                ActivityLogService::workspaceEvent(
+                    ActivityLog::EVENT_WORKSPACE_INVITATION_ACCEPTED,
+                    $workspace,
+                    $user,
+                    [
+                        'invitation_id' => $invitation->id,
+                        'target_user_id' => $user->id,
+                        'target_name' => $user->name,
+                        'target_email' => $invitation->email,
+                        'role' => $invitation->role,
+                        'role_label' => Workspace::roleLabel($invitation->role),
+                        'source' => 'email_invitation',
+                        'status' => Invitation::STATUS_ACCEPTED,
+                        'inviter_id' => $invitation->invited_by,
+                    ],
+                );
+            }
         });
     }
 }

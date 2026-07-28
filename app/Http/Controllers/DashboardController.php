@@ -8,6 +8,7 @@ use App\Models\Notification;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
+use App\Models\Workspace;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
@@ -129,11 +130,29 @@ class DashboardController extends Controller
         $user = Auth::user();
 
         $projectIds = $user->projects()->pluck('projects.id');
-        $workspaceIds = $user->workspaces()->pluck('workspaces.id');
+        $workspaceIds = $user->workspaces()->pluck('workspaces.id')
+            ->merge($user->createdWorkspaces()->pluck('workspaces.id'))
+            ->unique()
+            ->values();
+        $managedWorkspaceIds = Workspace::query()
+            ->whereIn('id', $workspaceIds)
+            ->where(function ($query) use ($user): void {
+                $query->where('created_by', $user->id)
+                    ->orWhereHas('members', function ($memberQuery) use ($user): void {
+                        $memberQuery
+                            ->where('users.id', $user->id)
+                            ->where('workspace_members.role', Workspace::ROLE_ADMIN);
+                    });
+            })
+            ->pluck('id');
 
         $query = \App\Models\ActivityLog::with('user')
             ->where(function ($q) use ($user, $projectIds, $workspaceIds) {
-                $q->where('user_id', $user->id)
+                $q->where(function ($ownActivity) use ($user): void {
+                    $ownActivity
+                        ->where('user_id', $user->id)
+                        ->where('entity_type', '!=', 'workspace');
+                })
                     ->orWhere(function ($q2) use ($projectIds) {
                         $q2->where('entity_type', 'task')
                             ->whereIn('entity_id', function ($sub) use ($projectIds) {
@@ -164,7 +183,7 @@ class DashboardController extends Controller
 
         $activities = $query->latest()->paginate(20);
 
-        return view('activity.index', compact('activities', 'todayCount'));
+        return view('activity.index', compact('activities', 'todayCount', 'managedWorkspaceIds'));
     }
 
     // LIVE SEARCH

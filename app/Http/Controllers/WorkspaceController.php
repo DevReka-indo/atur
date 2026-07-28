@@ -7,6 +7,7 @@ use App\Models\Notification;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Services\ActivityLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -196,17 +197,29 @@ class WorkspaceController extends Controller
             return back()->withErrors(['user_id' => 'User already in this workspace.']);
         }
 
-        $workspace->members()->attach($validated['user_id'], [
-            'role' => $validated['role'],
-            'joined_at' => now(),
-        ]);
-        ActivityLog::create([
-            'user_id' => Auth::id(),
-            'action' => 'assigned',
-            'entity_type' => 'workspace',
-            'entity_id' => $workspace->id,
-            'description' => 'Menambahkan anggota ke workspace: '.$workspace->name,
-        ]);
+        $targetUser = User::query()->findOrFail($validated['user_id']);
+
+        DB::transaction(function () use ($workspace, $targetUser, $validated): void {
+            $workspace->members()->attach($targetUser->id, [
+                'role' => $validated['role'],
+                'joined_at' => now(),
+            ]);
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_MEMBER_ADDED,
+                $workspace,
+                Auth::user(),
+                [
+                    'invitation_id' => null,
+                    'target_user_id' => $targetUser->id,
+                    'target_name' => $targetUser->name,
+                    'target_email' => $targetUser->email,
+                    'role' => $validated['role'],
+                    'role_label' => Workspace::roleLabel($validated['role']),
+                    'source' => 'registered_user',
+                    'status' => 'active',
+                ],
+            );
+        });
 
         return back()->with('success', 'Member added successfully.');
     }
@@ -231,7 +244,32 @@ class WorkspaceController extends Controller
             'role' => 'required|in:admin,member',
         ]);
 
-        $workspace->members()->updateExistingPivot($user->id, ['role' => $validated['role']]);
+        $oldRole = $workspace->roleForUser($user);
+
+        DB::transaction(function () use ($workspace, $user, $validated, $oldRole): void {
+            $workspace->members()->updateExistingPivot($user->id, ['role' => $validated['role']]);
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_MEMBER_ROLE_CHANGED,
+                $workspace,
+                Auth::user(),
+                [
+                    'invitation_id' => null,
+                    'target_user_id' => $user->id,
+                    'target_name' => $user->name,
+                    'target_email' => $user->email,
+                    'role' => $validated['role'],
+                    'role_label' => Workspace::roleLabel($validated['role']),
+                    'old_role' => $oldRole,
+                    'old_role_label' => Workspace::roleLabel((string) $oldRole),
+                    'source' => 'registered_user',
+                    'status' => 'active',
+                ],
+                [
+                    'role' => $oldRole,
+                    'role_label' => Workspace::roleLabel((string) $oldRole),
+                ],
+            );
+        });
 
         return redirect(route('workspaces.show', $workspace->token).'?tab=members')
             ->with('success', 'Member role updated.');
@@ -266,7 +304,32 @@ class WorkspaceController extends Controller
             ]);
         }
 
-        $workspace->members()->detach($user->id);
+        $role = $workspace->roleForUser($user);
+
+        DB::transaction(function () use ($workspace, $user, $role): void {
+            $workspace->members()->detach($user->id);
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_MEMBER_REMOVED,
+                $workspace,
+                Auth::user(),
+                [
+                    'invitation_id' => null,
+                    'target_user_id' => $user->id,
+                    'target_name' => $user->name,
+                    'target_email' => $user->email,
+                    'role' => $role,
+                    'role_label' => Workspace::roleLabel((string) $role),
+                    'source' => 'registered_user',
+                    'status' => 'removed',
+                ],
+                [
+                    'target_user_id' => $user->id,
+                    'role' => $role,
+                    'role_label' => Workspace::roleLabel((string) $role),
+                    'status' => 'active',
+                ],
+            );
+        });
 
         return redirect(route('workspaces.show', $workspace->token).'?tab=members')
             ->with('success', 'Member removed from workspace.');
@@ -287,6 +350,7 @@ class WorkspaceController extends Controller
         }
 
         DB::transaction(function () use ($workspace, $user): void {
+            $role = $workspace->roleForUser($user);
             $projectIds = $workspace->projects()->pluck('id')->all();
             $taskIds = Task::query()->whereIn('project_id', $projectIds)->pluck('id')->all();
 
@@ -328,36 +392,33 @@ class WorkspaceController extends Controller
                 ->delete();
             $workspace->members()->detach($user->id);
 
-            ActivityLog::create([
-                'user_id' => Auth::id(),
-                'action' => 'updated',
-                'entity_type' => 'workspace',
-                'entity_id' => $workspace->id,
-                'description' => sprintf(
-                    'Actor %s (ID %d) removed member %s (ID %d) from workspace %s (ID %d); detached %d project membership(s), %d pivot assignment(s), and cleared %d legacy assignment(s).',
-                    Auth::user()->name,
-                    Auth::id(),
-                    $user->name,
-                    $user->id,
-                    $workspace->name,
-                    $workspace->id,
-                    $projectMembershipCount,
-                    $pivotAssignmentCount,
-                    $legacyAssignmentCount,
-                ),
-                'old_value' => [
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_MEMBER_REMOVED,
+                $workspace,
+                Auth::user(),
+                [
+                    'invitation_id' => null,
                     'target_user_id' => $user->id,
+                    'target_name' => $user->name,
+                    'target_email' => $user->email,
+                    'role' => $role,
+                    'role_label' => Workspace::roleLabel((string) $role),
+                    'source' => 'registered_user',
+                    'status' => 'removed',
                     'project_membership_count' => $projectMembershipCount,
                     'pivot_assignment_count' => $pivotAssignmentCount,
                     'legacy_assignment_count' => $legacyAssignmentCount,
                 ],
-                'new_value' => [
-                    'workspace_membership' => 'removed',
-                    'project_membership_count' => 0,
-                    'pivot_assignment_count' => 0,
-                    'legacy_assignment_count' => 0,
+                [
+                    'target_user_id' => $user->id,
+                    'role' => $role,
+                    'role_label' => Workspace::roleLabel((string) $role),
+                    'status' => 'active',
+                    'project_membership_count' => $projectMembershipCount,
+                    'pivot_assignment_count' => $pivotAssignmentCount,
+                    'legacy_assignment_count' => $legacyAssignmentCount,
                 ],
-            ]);
+            );
         });
 
         return redirect(route('workspaces.show', $workspace->token).'?tab=members')
@@ -372,7 +433,23 @@ class WorkspaceController extends Controller
             abort(403);
         }
 
-        $workspace->generateInviteToken();
+        DB::transaction(function () use ($workspace): void {
+            $workspace->generateInviteToken();
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_INVITE_LINK_REGENERATED,
+                $workspace,
+                Auth::user(),
+                [
+                    'invitation_id' => null,
+                    'target_user_id' => null,
+                    'role' => Workspace::ROLE_MEMBER,
+                    'role_label' => Workspace::roleLabel(Workspace::ROLE_MEMBER),
+                    'source' => 'reusable_link',
+                    'status' => 'active',
+                    'expires_at' => $workspace->invite_token_expires_at?->toIso8601String(),
+                ],
+            );
+        });
 
         return back()->with('success', 'Invite link berhasil dibuat!');
     }
@@ -385,7 +462,23 @@ class WorkspaceController extends Controller
             abort(403);
         }
 
-        $workspace->resetInviteToken();
+        DB::transaction(function () use ($workspace): void {
+            $workspace->resetInviteToken();
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_INVITE_LINK_REGENERATED,
+                $workspace,
+                Auth::user(),
+                [
+                    'invitation_id' => null,
+                    'target_user_id' => null,
+                    'role' => Workspace::ROLE_MEMBER,
+                    'role_label' => Workspace::roleLabel(Workspace::ROLE_MEMBER),
+                    'source' => 'reusable_link',
+                    'status' => 'active',
+                    'expires_at' => $workspace->invite_token_expires_at?->toIso8601String(),
+                ],
+            );
+        });
 
         return back()->with('success', 'Invite link berhasil direset. Link lama tidak berlaku lagi.');
     }
@@ -398,7 +491,23 @@ class WorkspaceController extends Controller
             abort(403);
         }
 
-        $workspace->revokeInviteToken();
+        DB::transaction(function () use ($workspace): void {
+            $workspace->revokeInviteToken();
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_INVITE_LINK_DISABLED,
+                $workspace,
+                Auth::user(),
+                [
+                    'invitation_id' => null,
+                    'target_user_id' => null,
+                    'role' => Workspace::ROLE_MEMBER,
+                    'role_label' => Workspace::roleLabel(Workspace::ROLE_MEMBER),
+                    'source' => 'reusable_link',
+                    'status' => 'disabled',
+                    'expires_at' => null,
+                ],
+            );
+        });
 
         return back()->with('success', 'Invite link berhasil dinonaktifkan.');
     }
