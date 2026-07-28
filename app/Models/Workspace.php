@@ -72,6 +72,16 @@ class Workspace extends Model
         return $this->hasMany(Project::class);
     }
 
+    public function chatMessages(): HasMany
+    {
+        return $this->hasMany(WorkspaceChatMessage::class);
+    }
+
+    public function chatReads(): HasMany
+    {
+        return $this->hasMany(WorkspaceChatRead::class);
+    }
+
     public function isAdmin(User $user)
     {
         return $this->isOwner($user) || $this->members()

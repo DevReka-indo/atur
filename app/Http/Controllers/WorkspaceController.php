@@ -8,15 +8,17 @@ use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Services\ActivityLogService;
+use App\Services\WorkspaceChatService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 
 class WorkspaceController extends Controller
 {
-    private const SHOW_TABS = ['overview', 'members', 'activity'];
+    private const SHOW_TABS = ['overview', 'members', 'activity', 'chat'];
 
     private const WORKSPACE_ACTIVITY_EVENT_GROUPS = [
         'member' => [
@@ -94,12 +96,17 @@ class WorkspaceController extends Controller
             ->with('success', 'Workspace created successfully!');
     }
 
-    public function show(Request $request, string $token)
-    {
+    public function show(
+        Request $request,
+        string $token,
+        WorkspaceChatService $chatService,
+    ) {
         $workspace = $this->findByToken($token);
         $user = $request->user();
 
-        if (! $user->isSuperAdmin() && ! $workspace->isMember($user)) {
+        if (! $user->isSuperAdmin()
+            && ! $workspace->isOwner($user)
+            && ! $workspace->isMember($user)) {
             abort(403, 'You do not have access to this workspace.');
         }
 
@@ -114,8 +121,16 @@ class WorkspaceController extends Controller
         $activities = null;
         $activityFilter = 'all';
         $activitySearch = '';
+        $chatMessages = collect();
+        $chatHasMore = false;
+        $chatUnreadCount = 0;
 
         $workspace->loadCount('projects');
+
+        if (Schema::hasTable('workspace_chat_messages')
+            && Schema::hasTable('workspace_chat_reads')) {
+            $chatUnreadCount = $chatService->unreadCount($workspace, $user);
+        }
 
         if ($activeTab === 'overview') {
             $workspace->load([
@@ -177,6 +192,16 @@ class WorkspaceController extends Controller
             );
         }
 
+        if ($activeTab === 'chat'
+            && Schema::hasTable('workspace_chat_messages')
+            && Schema::hasTable('workspace_chat_reads')) {
+            $chatPage = $chatService->messages($workspace);
+            $chatMessages = $chatPage['messages'];
+            $chatHasMore = $chatPage['has_more'];
+            $chatService->markRead($workspace, $user, $chatMessages->last()?->id);
+            $chatUnreadCount = 0;
+        }
+
         return view('workspaces.show', compact(
             'workspace',
             'currentRole',
@@ -187,6 +212,9 @@ class WorkspaceController extends Controller
             'activities',
             'activityFilter',
             'activitySearch',
+            'chatMessages',
+            'chatHasMore',
+            'chatUnreadCount',
         ));
     }
 

@@ -779,15 +779,15 @@ class WorkspaceInvitationTest extends TestCase
         $this->assertFalse($activity->viewData('workspace')->relationLoaded('members'));
         $this->assertNotNull($activity->viewData('activities'));
 
-        $invalid = $this->actingAs($fixture['owner'])
+        $chat = $this->actingAs($fixture['owner'])
             ->get(route('workspaces.show', [
                 'token' => $fixture['workspace']->token,
                 'tab' => 'chat',
             ]))
             ->assertOk()
-            ->assertSee('Belum ada project')
+            ->assertSee('Workspace Chat')
             ->assertDontSee('Workspace Activity Log');
-        $this->assertActiveWorkspaceTab($invalid->getContent(), 'overview');
+        $this->assertActiveWorkspaceTab($chat->getContent(), 'chat');
     }
 
     public function test_workspace_activity_tab_is_scoped_newest_first_and_keeps_legacy_workspace_activity(): void
@@ -1068,6 +1068,12 @@ class WorkspaceInvitationTest extends TestCase
             'activity/_activity-list.blade.php',
             'activity/_activity-item.blade.php',
             'activity/_empty-state.blade.php',
+            'chat/_index.blade.php',
+            'chat/_chat-panel.blade.php',
+            'chat/_message-list.blade.php',
+            'chat/_message-item.blade.php',
+            'chat/_composer.blade.php',
+            'chat/_empty-state.blade.php',
         ] as $file) {
             $this->assertFileExists($showRoot.'/'.$file);
         }

@@ -3,6 +3,7 @@
         'overview' => ['label' => 'Overview', 'icon' => 'fa-diagram-project'],
         'members' => ['label' => 'Members', 'icon' => 'fa-user-group'],
         'activity' => ['label' => 'Activity Log', 'icon' => 'fa-clock-rotate-left'],
+        'chat' => ['label' => 'Chat', 'icon' => 'fa-comments'],
     ];
 @endphp
 
@@ -17,6 +18,13 @@
                     : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700' }}">
             <i class="fa-solid {{ $config['icon'] }} w-5 text-center text-sm" aria-hidden="true"></i>
             <span>{{ $config['label'] }}</span>
+            @if ($tab === 'chat' && $chatUnreadCount > 0)
+                <span
+                    class="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold text-white"
+                    aria-label="{{ $chatUnreadCount }} unread chat messages">
+                    {{ $chatUnreadCount > 99 ? '99+' : $chatUnreadCount }}
+                </span>
+            @endif
         </a>
     @endforeach
 </nav>

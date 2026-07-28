@@ -18,6 +18,7 @@ use App\Http\Controllers\ProjectTemplateTaskController;
 use App\Http\Controllers\RolePermissionController;
 use App\Http\Controllers\TaskController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\WorkspaceChatController;
 use App\Http\Controllers\WorkspaceController;
 use App\Http\Controllers\WorkspaceInvitationController;
 use Illuminate\Support\Facades\Auth;
@@ -161,6 +162,26 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/workspaces', [WorkspaceController::class, 'store'])
         ->name('workspaces.store');
+
+    Route::get('/workspaces/{workspace:token}/chat/messages', [WorkspaceChatController::class, 'index'])
+        ->middleware('throttle:workspace-chat-poll')
+        ->name('workspace-chat.messages.index');
+
+    Route::post('/workspaces/{workspace:token}/chat/messages', [WorkspaceChatController::class, 'store'])
+        ->middleware('throttle:workspace-chat-write')
+        ->name('workspace-chat.messages.store');
+
+    Route::patch('/workspaces/{workspace:token}/chat/messages/{message}', [WorkspaceChatController::class, 'update'])
+        ->middleware('throttle:workspace-chat-write')
+        ->name('workspace-chat.messages.update');
+
+    Route::delete('/workspaces/{workspace:token}/chat/messages/{message}', [WorkspaceChatController::class, 'destroy'])
+        ->middleware('throttle:workspace-chat-write')
+        ->name('workspace-chat.messages.destroy');
+
+    Route::post('/workspaces/{workspace:token}/chat/read', [WorkspaceChatController::class, 'markRead'])
+        ->middleware('throttle:workspace-chat-poll')
+        ->name('workspace-chat.read');
 
     Route::get('/workspaces/{token}', [WorkspaceController::class, 'show'])
         ->name('workspaces.show');

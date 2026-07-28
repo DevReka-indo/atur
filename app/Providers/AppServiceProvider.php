@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\UserNotification;
+use App\Models\Workspace;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -32,6 +33,12 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by(
                 implode(':', [$request->user()?->id, $request->route('token')]),
             );
+        });
+        RateLimiter::for('workspace-chat-poll', function (Request $request): Limit {
+            return Limit::perMinute(60)->by($this->workspaceChatRateLimitKey($request));
+        });
+        RateLimiter::for('workspace-chat-write', function (Request $request): Limit {
+            return Limit::perMinute(30)->by($this->workspaceChatRateLimitKey($request));
         });
 
         Gate::before(function (User $user): ?bool {
@@ -81,5 +88,15 @@ class AppServiceProvider extends ServiceProvider
             $view->with('unreadCount', $unreadCount);
             $view->with('sidebarUnreadDiscussion', $sidebarUnreadDiscussion); // ← BARU
         });
+    }
+
+    private function workspaceChatRateLimitKey(Request $request): string
+    {
+        $workspace = $request->route('workspace');
+        $workspaceKey = $workspace instanceof Workspace
+            ? $workspace->getKey()
+            : $workspace;
+
+        return implode(':', [$request->user()?->id, $workspaceKey]);
     }
 }

@@ -85,6 +85,8 @@
             @include('workspaces.partials.show.members._index')
         @elseif ($activeTab === 'activity')
             @include('workspaces.partials.show.activity._index')
+        @elseif ($activeTab === 'chat')
+            @include('workspaces.partials.show.chat._index')
         @else
             @include('workspaces.partials.show._overview')
         @endif
