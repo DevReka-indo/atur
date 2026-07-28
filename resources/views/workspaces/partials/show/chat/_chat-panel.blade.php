@@ -2,9 +2,12 @@
     data-index-url="{{ route('workspace-chat.messages.index', $workspace) }}"
     data-store-url="{{ route('workspace-chat.messages.store', $workspace) }}"
     data-read-url="{{ route('workspace-chat.read', $workspace) }}"
+    data-mentions-url="{{ route('workspace-chat.mentions', $workspace) }}"
     data-update-url-template="{{ route('workspace-chat.messages.update', [$workspace, '__MESSAGE_ID__']) }}"
     data-delete-url-template="{{ route('workspace-chat.messages.destroy', [$workspace, '__MESSAGE_ID__']) }}"
-    data-current-user-id="{{ Auth::id() }}" data-has-more="{{ $chatHasMore ? 'true' : 'false' }}">
+    data-current-user-id="{{ Auth::id() }}" data-has-more="{{ $chatHasMore ? 'true' : 'false' }}"
+    data-target-message-id="{{ $chatTargetMessageId }}"
+    data-target-message-missing="{{ $chatTargetMissing ? 'true' : 'false' }}">
     <div class="border-b border-gray-200 px-5 py-4 sm:px-6">
         <div class="flex items-center gap-3">
             <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">

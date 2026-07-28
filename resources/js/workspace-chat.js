@@ -10,6 +10,9 @@ if (chatRoot) {
     const errorMessage = chatRoot.querySelector('[data-chat-error]');
     const loadOlderButton = chatRoot.querySelector('[data-chat-load-older]');
     const newMessagesIndicator = chatRoot.querySelector('[data-chat-new-indicator]');
+    const mentionSuggestions = chatRoot.querySelector('[data-chat-mention-suggestions]');
+    const mentionPreview = chatRoot.querySelector('[data-chat-mention-preview]');
+    const targetStatus = chatRoot.querySelector('[data-chat-target-status]');
     const csrfToken = composer.querySelector('input[name="_token"]').value;
     const knownMessageIds = new Set(
         [...messageList.querySelectorAll('[data-chat-message]')]
@@ -21,6 +24,11 @@ if (chatRoot) {
     let pollingController = null;
     let markingRead = false;
     let lastMarkedReadId = Math.max(0, ...knownMessageIds);
+    let mentionSearchTimer = null;
+    let mentionSearchController = null;
+    let mentionOptions = [];
+    let activeMentionIndex = -1;
+    let mentionStart = null;
 
     const messageElements = () => [...messageList.querySelectorAll('[data-chat-message]')];
     const firstMessageId = () => Number(messageElements()[0]?.dataset.messageId || 0);
@@ -60,11 +68,31 @@ if (chatRoot) {
         element.classList.add(...classes.split(' '));
     };
 
+    const renderMessageContent = (element, message) => {
+        element.replaceChildren();
+
+        (message.content_segments || [
+            { type: 'text', text: message.plain_text || message.content },
+        ]).forEach((segment) => {
+            if (segment.type === 'mention') {
+                const mention = document.createElement('span');
+                addClasses(mention, 'rounded bg-sky-50 px-1 py-0.5 font-semibold text-sky-700');
+                mention.textContent = segment.text;
+                element.append(mention);
+
+                return;
+            }
+
+            element.append(document.createTextNode(segment.text));
+        });
+    };
+
     const createMessageElement = (message) => {
         const article = document.createElement('article');
         addClasses(article, 'group flex items-start gap-3');
         article.dataset.chatMessage = '';
         article.dataset.messageId = String(message.id);
+        article.dataset.messageContent = message.content;
 
         if (message.sender.avatar) {
             const avatar = document.createElement('img');
@@ -110,7 +138,7 @@ if (chatRoot) {
         const content = document.createElement('p');
         addClasses(content, 'mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700');
         content.dataset.chatContent = '';
-        content.textContent = message.content;
+        renderMessageContent(content, message);
 
         body.append(meta, content);
 
@@ -176,6 +204,7 @@ if (chatRoot) {
             messageList.append(createMessageElement(message));
         });
         updateEmptyState();
+        highlightTargetMessage();
 
         if (shouldScroll) {
             messageList.scrollTop = messageList.scrollHeight;
@@ -183,6 +212,216 @@ if (chatRoot) {
         } else if (messages.length > 0) {
             newMessagesIndicator.classList.remove('hidden');
         }
+    };
+
+    const highlightTargetMessage = () => {
+        const targetMessageId = Number(chatRoot.dataset.targetMessageId || 0);
+
+        if (!targetMessageId) {
+            return false;
+        }
+
+        const target = messageList.querySelector(
+            `[data-chat-message][data-message-id="${targetMessageId}"]`,
+        );
+
+        if (!target) {
+            return false;
+        }
+
+        addClasses(target, 'rounded-xl bg-sky-50/60 p-2 ring-2 ring-sky-400');
+        targetStatus?.classList.add('hidden');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        return true;
+    };
+
+    const closeMentionSuggestions = () => {
+        mentionSuggestions.classList.add('hidden');
+        input.setAttribute('aria-expanded', 'false');
+        mentionOptions = [];
+        activeMentionIndex = -1;
+        mentionStart = null;
+    };
+
+    const renderMentionPreview = () => {
+        const markerPattern = /@\[([^\]\r\n]{1,255})\]\(user:([1-9][0-9]*)\)/gu;
+        const mentions = new Map();
+
+        for (const match of input.value.matchAll(markerPattern)) {
+            mentions.set(match[2], match[1]);
+        }
+
+        mentionPreview.replaceChildren();
+        mentions.forEach((name) => {
+            const label = document.createElement('span');
+            addClasses(
+                label,
+                'inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700',
+            );
+            label.textContent = `@${name}`;
+            mentionPreview.append(label);
+        });
+        mentionPreview.classList.toggle('hidden', mentions.size === 0);
+    };
+
+    const setActiveMention = (index) => {
+        const options = [...mentionSuggestions.querySelectorAll('[data-chat-mention-option]')];
+
+        if (options.length === 0) {
+            return;
+        }
+
+        activeMentionIndex = (index + options.length) % options.length;
+        options.forEach((option, optionIndex) => {
+            const isActive = optionIndex === activeMentionIndex;
+            option.classList.toggle('bg-sky-50', isActive);
+            option.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        options[activeMentionIndex].scrollIntoView({ block: 'nearest' });
+    };
+
+    const insertMention = (member) => {
+        if (mentionStart === null) {
+            return;
+        }
+
+        const cursor = input.selectionStart;
+        const safeName = member.name
+            .replace(/[\[\]()\r\n]+/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 100) || 'User';
+        const marker = `@[${safeName}](user:${member.id}) `;
+        const nextValue = input.value.slice(0, mentionStart)
+            + marker
+            + input.value.slice(cursor);
+
+        if (nextValue.length > 1000) {
+            showError('Message cannot exceed 1000 characters.');
+
+            return;
+        }
+
+        input.value = nextValue;
+        const nextCursor = mentionStart + marker.length;
+        input.setSelectionRange(nextCursor, nextCursor);
+        renderMentionPreview();
+        closeMentionSuggestions();
+        input.focus();
+    };
+
+    const renderMentionSuggestions = (members) => {
+        mentionSuggestions.replaceChildren();
+        mentionOptions = members;
+        activeMentionIndex = -1;
+
+        if (members.length === 0) {
+            const status = document.createElement('p');
+            addClasses(status, 'px-3 py-2 text-sm text-gray-500');
+            status.textContent = 'No matching workspace members.';
+            mentionSuggestions.append(status);
+        } else {
+            members.forEach((member, index) => {
+                const option = document.createElement('button');
+                option.type = 'button';
+                option.dataset.chatMentionOption = String(index);
+                option.setAttribute('role', 'option');
+                option.setAttribute('aria-selected', 'false');
+                addClasses(
+                    option,
+                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-sky-50',
+                );
+
+                if (member.avatar) {
+                    const avatar = document.createElement('img');
+                    avatar.src = member.avatar;
+                    avatar.alt = '';
+                    addClasses(avatar, 'h-8 w-8 rounded-full object-cover');
+                    option.append(avatar);
+                } else {
+                    const avatar = document.createElement('span');
+                    addClasses(
+                        avatar,
+                        'flex h-8 w-8 items-center justify-center rounded-full bg-sky-100 text-xs font-semibold text-sky-700',
+                    );
+                    avatar.textContent = member.name.slice(0, 1).toUpperCase() || '?';
+                    avatar.setAttribute('aria-hidden', 'true');
+                    option.append(avatar);
+                }
+
+                const identity = document.createElement('span');
+                addClasses(identity, 'min-w-0 flex-1');
+                const name = document.createElement('span');
+                addClasses(name, 'block truncate text-sm font-medium text-gray-900');
+                name.textContent = member.name;
+                const emailHint = document.createElement('span');
+                addClasses(emailHint, 'block truncate text-xs text-gray-500');
+                emailHint.textContent = member.email_hint;
+                identity.append(name, emailHint);
+                option.append(identity);
+                option.addEventListener('mousedown', (event) => {
+                    event.preventDefault();
+                    insertMention(member);
+                });
+                mentionSuggestions.append(option);
+            });
+            setActiveMention(0);
+        }
+
+        mentionSuggestions.classList.remove('hidden');
+        input.setAttribute('aria-expanded', 'true');
+    };
+
+    const mentionContext = () => {
+        const cursor = input.selectionStart;
+        const textBeforeCursor = input.value.slice(0, cursor);
+        const match = textBeforeCursor.match(/(^|\s)@([^\s@[\]()]{0,50})$/u);
+
+        if (!match) {
+            return null;
+        }
+
+        return {
+            start: textBeforeCursor.lastIndexOf('@'),
+            search: match[2],
+        };
+    };
+
+    const searchMentions = async (context) => {
+        mentionSearchController?.abort();
+        mentionSearchController = new AbortController();
+        const url = new URL(chatRoot.dataset.mentionsUrl, window.location.origin);
+        url.searchParams.set('search', context.search);
+
+        try {
+            const payload = await requestJson(url, {
+                signal: mentionSearchController.signal,
+            });
+            mentionStart = context.start;
+            renderMentionSuggestions(payload.members);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                closeMentionSuggestions();
+                showError(error.message);
+            }
+        } finally {
+            mentionSearchController = null;
+        }
+    };
+
+    const queueMentionSearch = () => {
+        window.clearTimeout(mentionSearchTimer);
+        const context = mentionContext();
+
+        if (!context) {
+            closeMentionSuggestions();
+
+            return;
+        }
+
+        mentionStart = context.start;
+        mentionSearchTimer = window.setTimeout(() => searchMentions(context), 200);
     };
 
     const markLatestRead = async () => {
@@ -264,6 +503,7 @@ if (chatRoot) {
         clearError();
         submitButton.disabled = true;
         submitLabel.textContent = 'Sending...';
+        closeMentionSuggestions();
 
         try {
             const message = await requestJson(chatRoot.dataset.storeUrl, {
@@ -272,6 +512,7 @@ if (chatRoot) {
             });
             appendMessages([message], true);
             input.value = '';
+            renderMentionPreview();
             await markLatestRead();
         } catch (error) {
             showError(error.message);
@@ -327,7 +568,10 @@ if (chatRoot) {
 
         if (event.target.closest('[data-chat-edit]')) {
             const contentElement = messageElement.querySelector('[data-chat-content]');
-            const content = window.prompt('Edit message', contentElement.textContent);
+            const content = window.prompt(
+                'Edit message',
+                messageElement.dataset.messageContent,
+            );
 
             if (content === null) {
                 return;
@@ -343,7 +587,8 @@ if (chatRoot) {
                         body: JSON.stringify({ content }),
                     },
                 );
-                contentElement.textContent = message.content;
+                messageElement.dataset.messageContent = message.content;
+                renderMessageContent(contentElement, message);
                 messageElement.querySelector('[data-chat-edited]').classList.remove('hidden');
             } catch (error) {
                 showError(error.message);
@@ -374,6 +619,34 @@ if (chatRoot) {
         markLatestRead();
     });
 
+    input.addEventListener('input', () => {
+        renderMentionPreview();
+        queueMentionSearch();
+    });
+    input.addEventListener('click', queueMentionSearch);
+    input.addEventListener('blur', () => {
+        window.setTimeout(closeMentionSuggestions, 150);
+    });
+    input.addEventListener('keydown', (event) => {
+        if (mentionSuggestions.classList.contains('hidden')) {
+            return;
+        }
+
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setActiveMention(activeMentionIndex + 1);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setActiveMention(activeMentionIndex - 1);
+        } else if (event.key === 'Enter' && activeMentionIndex >= 0) {
+            event.preventDefault();
+            insertMention(mentionOptions[activeMentionIndex]);
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            closeMentionSuggestions();
+        }
+    });
+
     messageList.addEventListener('scroll', () => {
         if (isNearBottom()) {
             newMessagesIndicator.classList.add('hidden');
@@ -395,10 +668,15 @@ if (chatRoot) {
 
     window.addEventListener('beforeunload', () => {
         window.clearTimeout(pollingTimer);
+        window.clearTimeout(mentionSearchTimer);
         pollingController?.abort();
+        mentionSearchController?.abort();
     });
 
-    messageList.scrollTop = messageList.scrollHeight;
+    if (!highlightTargetMessage()) {
+        messageList.scrollTop = messageList.scrollHeight;
+    }
+    renderMentionPreview();
     markLatestRead();
     schedulePoll();
 }

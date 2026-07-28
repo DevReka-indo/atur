@@ -124,6 +124,8 @@ class WorkspaceController extends Controller
         $chatMessages = collect();
         $chatHasMore = false;
         $chatUnreadCount = 0;
+        $chatTargetMessageId = null;
+        $chatTargetMissing = false;
 
         $workspace->loadCount('projects');
 
@@ -195,11 +197,26 @@ class WorkspaceController extends Controller
         if ($activeTab === 'chat'
             && Schema::hasTable('workspace_chat_messages')
             && Schema::hasTable('workspace_chat_reads')) {
-            $chatPage = $chatService->messages($workspace);
+            $requestedMessageId = $request->integer('message');
+            $chatTargetMessageId = $requestedMessageId > 0
+                && $workspace->chatMessages()->whereKey($requestedMessageId)->exists()
+                    ? $requestedMessageId
+                    : null;
+            $chatTargetMissing = $request->has('message')
+                && $chatTargetMessageId === null;
+            $chatPage = $chatTargetMessageId !== null
+                ? $chatService->messages($workspace, $chatTargetMessageId + 1)
+                : $chatService->messages($workspace);
             $chatMessages = $chatPage['messages'];
+            $chatMessages->each(function ($message) use ($chatService): void {
+                $message->setAttribute(
+                    'rendered_content',
+                    $chatService->renderedContent($message->content),
+                );
+            });
             $chatHasMore = $chatPage['has_more'];
             $chatService->markRead($workspace, $user, $chatMessages->last()?->id);
-            $chatUnreadCount = 0;
+            $chatUnreadCount = $chatService->unreadCount($workspace, $user);
         }
 
         return view('workspaces.show', compact(
@@ -215,6 +232,8 @@ class WorkspaceController extends Controller
             'chatMessages',
             'chatHasMore',
             'chatUnreadCount',
+            'chatTargetMessageId',
+            'chatTargetMissing',
         ));
     }
 

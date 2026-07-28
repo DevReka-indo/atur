@@ -48,10 +48,11 @@ class WorkspaceChatController extends Controller
         $this->authorizeWorkspaceAccess($workspace, $user);
         $validated = $request->validated();
 
-        $message = $workspace->chatMessages()->create([
-            'user_id' => $user->id,
-            'content' => $validated['content'],
-        ]);
+        $message = $this->chatService->createMessage(
+            $workspace,
+            $user,
+            $validated['content'],
+        );
 
         return response()->json(
             $this->chatService->messagePayload($message, $user),
@@ -70,12 +71,32 @@ class WorkspaceChatController extends Controller
         abort_unless((int) $message->user_id === (int) $user->id, 403);
         $validated = $request->validated();
 
-        $message->update([
-            'content' => $validated['content'],
-            'edited_at' => now(),
-        ]);
+        $message = $this->chatService->updateMessage(
+            $message,
+            $user,
+            $validated['content'],
+        );
 
         return response()->json($this->chatService->messagePayload($message, $user));
+    }
+
+    public function mentionCandidates(
+        Request $request,
+        Workspace $workspace,
+    ): JsonResponse {
+        $user = $request->user();
+        $this->authorizeWorkspaceAccess($workspace, $user);
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return response()->json([
+            'members' => $this->chatService->mentionCandidates(
+                $workspace,
+                $user,
+                trim($validated['search'] ?? ''),
+            ),
+        ]);
     }
 
     public function destroy(

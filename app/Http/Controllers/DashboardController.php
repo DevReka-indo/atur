@@ -302,7 +302,7 @@ class DashboardController extends Controller
         $userId = Auth::id();
 
         $notifications = Notification::where('user_id', $userId)
-            ->with(['task', 'project'])
+            ->with(['task', 'project', 'workspace'])
             ->orderByRaw('read_at IS NOT NULL ASC')
             ->orderBy('created_at', 'desc')
             ->get()
@@ -313,6 +313,11 @@ class DashboardController extends Controller
                     return false;
                 }
                 if ($notif->project_id && ! $notif->project) {
+                    $notif->delete();
+
+                    return false;
+                }
+                if ($notif->workspace_id && ! $notif->workspace) {
                     $notif->delete();
 
                     return false;
@@ -414,6 +419,9 @@ class DashboardController extends Controller
                     'message' => $n->message,
                     'task_id' => $n->task_id,
                     'project_id' => $n->project_id,
+                    'workspace_id' => $n->workspace_id,
+                    'workspace_chat_message_id' => $n->workspace_chat_message_id,
+                    'url' => $n->targetUrl(),
                     'time' => $n->created_at->diffForHumans(),
                 ];
             });
@@ -430,6 +438,22 @@ class DashboardController extends Controller
         $notif->delete();
 
         return back()->with('success', 'Notifikasi dihapus.');
+    }
+
+    public function openNotification($id)
+    {
+        $notification = Notification::query()
+            ->whereKey($id)
+            ->where('user_id', Auth::id())
+            ->firstOrFail();
+
+        if ($notification->read_at === null) {
+            $notification->update(['read_at' => now()]);
+        }
+
+        return redirect()->to(
+            $notification->targetUrl() ?? route('notifications.index'),
+        );
     }
 
     public function account()

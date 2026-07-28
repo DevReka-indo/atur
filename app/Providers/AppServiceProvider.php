@@ -40,6 +40,9 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('workspace-chat-write', function (Request $request): Limit {
             return Limit::perMinute(30)->by($this->workspaceChatRateLimitKey($request));
         });
+        RateLimiter::for('workspace-chat-mentions', function (Request $request): Limit {
+            return Limit::perMinute(60)->by($this->workspaceChatRateLimitKey($request));
+        });
 
         Gate::before(function (User $user): ?bool {
             return $user->hasRole('super_admin')

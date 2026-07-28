@@ -71,12 +71,9 @@
                     @php $isRead = $notif->isRead(); @endphp
 
                     @php
-                        $url = null;
-                        if ($notif->task_id && $notif->task) {
-                            $url = route('tasks.show', $notif->task->token);
-                        } elseif ($notif->project_id && $notif->project) {
-                            $url = route('projects.show', $notif->project->token);
-                        }
+                        $url = $notif->targetUrl()
+                            ? route('notifications.open', $notif->id)
+                            : null;
                         $delayClass = match (true) {
                             $loop->index < 1 => 'delay-0',
                             $loop->index < 2 => 'delay-75',

@@ -2,16 +2,23 @@
 
 namespace App\Services;
 
+use App\Models\Notification;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspaceChatMessage;
 use App\Models\WorkspaceChatRead;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\HtmlString;
+use Illuminate\Support\Str;
 
 class WorkspaceChatService
 {
     public const PAGE_SIZE = 30;
+
+    public function __construct(
+        private readonly WorkspaceChatMentionParser $mentionParser,
+    ) {}
 
     /**
      * @return array{messages: Collection<int, WorkspaceChatMessage>, has_more: bool}
@@ -62,6 +69,8 @@ class WorkspaceChatService
      * @return array{
      *     id: int,
      *     content: string,
+     *     plain_text: string,
+     *     content_segments: list<array{type: 'text'|'mention', text: string, user_id: ?int}>,
      *     sender: array{id: ?int, name: string, avatar: ?string},
      *     created_at: string,
      *     edited_at: ?string,
@@ -78,6 +87,8 @@ class WorkspaceChatService
         return [
             'id' => $message->id,
             'content' => $message->content,
+            'plain_text' => $this->mentionParser->plainText($message->content),
+            'content_segments' => $this->mentionParser->segments($message->content),
             'sender' => [
                 'id' => $sender?->id,
                 'name' => $sender?->name ?? 'Deleted user',
@@ -90,6 +101,116 @@ class WorkspaceChatService
             'can_edit' => $isSender,
             'can_delete' => $isSender,
         ];
+    }
+
+    public function createMessage(
+        Workspace $workspace,
+        User $sender,
+        string $content,
+    ): WorkspaceChatMessage {
+        return DB::transaction(function () use ($workspace, $sender, $content): WorkspaceChatMessage {
+            $parsedMention = $this->mentionParser->normalize($workspace, $content);
+            $message = $workspace->chatMessages()->create([
+                'user_id' => $sender->id,
+                'content' => $parsedMention['content'],
+            ]);
+            $message->mentions()->sync($parsedMention['user_ids']);
+            $this->createMentionNotifications(
+                $workspace,
+                $message,
+                $sender,
+                $parsedMention['user_ids'],
+            );
+
+            return $message;
+        });
+    }
+
+    public function updateMessage(
+        WorkspaceChatMessage $message,
+        User $sender,
+        string $content,
+    ): WorkspaceChatMessage {
+        return DB::transaction(function () use ($message, $sender, $content): WorkspaceChatMessage {
+            $lockedMessage = WorkspaceChatMessage::query()
+                ->whereKey($message->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $workspace = $lockedMessage->workspace()->firstOrFail();
+            $existingMentionIds = $lockedMessage->mentions()
+                ->pluck('users.id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
+            $parsedMention = $this->mentionParser->normalize($workspace, $content);
+            $newMentionIds = array_values(array_diff(
+                $parsedMention['user_ids'],
+                $existingMentionIds,
+            ));
+
+            $lockedMessage->update([
+                'content' => $parsedMention['content'],
+                'edited_at' => now(),
+            ]);
+            $lockedMessage->mentions()->sync($parsedMention['user_ids']);
+            $this->createMentionNotifications(
+                $workspace,
+                $lockedMessage,
+                $sender,
+                $newMentionIds,
+            );
+
+            return $lockedMessage;
+        });
+    }
+
+    public function renderedContent(string $content): HtmlString
+    {
+        return $this->mentionParser->renderedContent($content);
+    }
+
+    /**
+     * @return list<array{id: int, name: string, avatar: ?string, email_hint: string}>
+     */
+    public function mentionCandidates(
+        Workspace $workspace,
+        User $actor,
+        string $search,
+    ): array {
+        return User::query()
+            ->select(['id', 'name', 'email', 'profile_photo', 'avatar_url'])
+            ->whereKeyNot($actor->id)
+            ->where('is_active', true)
+            ->where(function ($query) use ($workspace): void {
+                $query->whereKey($workspace->created_by)
+                    ->orWhereHas(
+                        'workspaces',
+                        fn ($workspaceQuery) => $workspaceQuery->whereKey($workspace->id),
+                    );
+            })
+            ->when($search !== '', function ($query) use ($search): void {
+                $query->where(function ($searchQuery) use ($search): void {
+                    $searchQuery->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%");
+                });
+            })
+            ->orderBy('name')
+            ->limit(10)
+            ->get()
+            ->map(function (User $user): array {
+                $emailLocal = Str::before($user->email, '@');
+                $emailDomain = Str::after($user->email, '@');
+
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'avatar' => $user->profile_photo
+                        ? asset('storage/'.$user->profile_photo)
+                        : $user->avatar_url,
+                    'email_hint' => Str::substr($emailLocal, 0, 1).'***@'.$emailDomain,
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     public function unreadCount(Workspace $workspace, User $user): int
@@ -158,5 +279,56 @@ class WorkspaceChatService
 
             $message->delete();
         });
+    }
+
+    /**
+     * @param  list<int>  $mentionedUserIds
+     */
+    private function createMentionNotifications(
+        Workspace $workspace,
+        WorkspaceChatMessage $message,
+        User $sender,
+        array $mentionedUserIds,
+    ): void {
+        $targetUserIds = collect($mentionedUserIds)
+            ->reject(fn (int $userId): bool => $userId === (int) $sender->id)
+            ->values();
+
+        if ($targetUserIds->isEmpty()) {
+            return;
+        }
+
+        $excerpt = $this->mentionParser->notificationExcerpt($message->content);
+        $url = route('workspaces.show', [
+            'token' => $workspace->token,
+            'tab' => 'chat',
+            'message' => $message->id,
+        ], false);
+
+        foreach ($targetUserIds as $targetUserId) {
+            Notification::firstOrCreate(
+                [
+                    'user_id' => $targetUserId,
+                    'type' => Notification::TYPE_WORKSPACE_CHAT_MENTION,
+                    'workspace_chat_message_id' => $message->id,
+                ],
+                [
+                    'title' => 'Mention di Workspace Chat',
+                    'message' => $sender->name.' menyebut Anda di chat '
+                        .$workspace->name.': '.$excerpt,
+                    'workspace_id' => $workspace->id,
+                    'url' => $url,
+                    'metadata' => [
+                        'workspace_id' => $workspace->id,
+                        'workspace_token' => $workspace->token,
+                        'workspace_name' => $workspace->name,
+                        'message_id' => $message->id,
+                        'sender_id' => $sender->id,
+                        'sender_name' => $sender->name,
+                        'excerpt' => $excerpt,
+                    ],
+                ],
+            );
+        }
     }
 }

@@ -30,9 +30,12 @@ class WorkspaceChatTest extends TestCase
         });
         (require database_path('migrations/2026_07_28_144655_create_workspace_chat_messages_table.php'))->up();
         (require database_path('migrations/2026_07_28_144655_create_workspace_chat_reads_table.php'))->up();
+        (require database_path('migrations/2026_07_28_150913_create_workspace_chat_message_mentions_table.php'))->up();
+        (require database_path('migrations/2026_07_28_150913_add_workspace_chat_context_to_notifications_table.php'))->up();
 
         RateLimiter::clear('workspace-chat-poll');
         RateLimiter::clear('workspace-chat-write');
+        RateLimiter::clear('workspace-chat-mentions');
     }
 
     public function test_workspace_relations_and_read_state_unique_constraint_are_configured(): void
@@ -374,6 +377,8 @@ class WorkspaceChatTest extends TestCase
             '_message-item.blade.php',
             '_composer.blade.php',
             '_empty-state.blade.php',
+            '_mention-suggestions.blade.php',
+            '_message-highlight.blade.php',
         ] as $partial) {
             $this->assertFileExists(
                 resource_path('views/workspaces/partials/show/chat/'.$partial),
@@ -395,12 +400,15 @@ class WorkspaceChatTest extends TestCase
         $storeMiddleware = $routes->getByName('workspace-chat.messages.store')->gatherMiddleware();
         $updateMiddleware = $routes->getByName('workspace-chat.messages.update')->gatherMiddleware();
         $destroyMiddleware = $routes->getByName('workspace-chat.messages.destroy')->gatherMiddleware();
+        $mentionMiddleware = $routes->getByName('workspace-chat.mentions')->gatherMiddleware();
 
         $this->assertContains('auth', $indexMiddleware);
         $this->assertContains('throttle:workspace-chat-poll', $indexMiddleware);
         $this->assertContains('throttle:workspace-chat-write', $storeMiddleware);
         $this->assertContains('throttle:workspace-chat-write', $updateMiddleware);
         $this->assertContains('throttle:workspace-chat-write', $destroyMiddleware);
+        $this->assertContains('auth', $mentionMiddleware);
+        $this->assertContains('throttle:workspace-chat-mentions', $mentionMiddleware);
     }
 
     public function test_user_deletion_keeps_chat_history_and_nulls_sender(): void

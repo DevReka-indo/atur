@@ -6,7 +6,8 @@
         : $sender?->avatar_url;
 @endphp
 
-<article class="group flex items-start gap-3" data-chat-message data-message-id="{{ $message->id }}">
+<article class="group flex items-start gap-3" data-chat-message data-message-id="{{ $message->id }}"
+    data-message-content="{{ $message->content }}">
     @if ($avatar)
         <img src="{{ $avatar }}" alt="{{ $sender?->name ?? 'Deleted user' }}"
             class="h-9 w-9 shrink-0 rounded-full object-cover">
@@ -33,7 +34,7 @@
         </div>
 
         <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700"
-            data-chat-content>{{ $message->content }}</p>
+            data-chat-content>{{ $message->rendered_content }}</p>
 
         @if ($canManageMessage)
             <div class="mt-1 flex items-center gap-3 text-xs">

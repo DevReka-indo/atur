@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class WorkspaceChatMessage extends Model
 {
@@ -32,5 +33,13 @@ class WorkspaceChatMessage extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function mentions(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            User::class,
+            'workspace_chat_message_mentions',
+        )->withTimestamps();
     }
 }

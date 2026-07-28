@@ -145,6 +145,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/notifications/{id}/read', [DashboardController::class, 'markAsRead'])
         ->name('notifications.read');
 
+    Route::get('/notifications/{id}/open', [DashboardController::class, 'openNotification'])
+        ->name('notifications.open');
+
     Route::delete('/notifications/{id}', [DashboardController::class, 'destroy'])
         ->name('notifications.destroy');
 
@@ -182,6 +185,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/workspaces/{workspace:token}/chat/read', [WorkspaceChatController::class, 'markRead'])
         ->middleware('throttle:workspace-chat-poll')
         ->name('workspace-chat.read');
+
+    Route::get('/workspaces/{workspace:token}/chat/mentions', [WorkspaceChatController::class, 'mentionCandidates'])
+        ->middleware('throttle:workspace-chat-mentions')
+        ->name('workspace-chat.mentions');
 
     Route::get('/workspaces/{token}', [WorkspaceController::class, 'show'])
         ->name('workspaces.show');
