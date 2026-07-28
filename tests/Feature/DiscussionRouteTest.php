@@ -75,9 +75,31 @@ class DiscussionRouteTest extends TestCase
         $chatView = file_get_contents(resource_path('views/discussion/chat.blade.php'));
 
         $this->assertIsString($chatView);
-        $this->assertStringContainsString("route('discussion.messages.store'", $chatView);
+        $this->assertMatchesRegularExpression(
+            '/route\s*\(\s*[\'"]discussion\.messages\.store[\'"]/',
+            $chatView,
+        );
         $this->assertStringContainsString('fetch(MESSAGE_STORE_URL', $chatView);
         $this->assertStringNotContainsString('fetch(`/discussion/${PROJECT_ID}/thread/${THREAD_ID}/messages`,', $chatView);
+    }
+
+    public function test_thread_preview_uses_safe_dom_text_rendering(): void
+    {
+        $discussionView = file_get_contents(resource_path('views/discussion/show.blade.php'));
+
+        $this->assertIsString($discussionView);
+        $this->assertStringContainsString('sender.textContent =', $discussionView);
+        $this->assertStringContainsString('document.createTextNode(', $discussionView);
+        $this->assertDoesNotMatchRegularExpression('/preview\.innerHTML\s*=/', $discussionView);
+    }
+
+    public function test_thread_preview_uses_the_eager_loaded_last_message(): void
+    {
+        $discussionView = file_get_contents(resource_path('views/discussion/show.blade.php'));
+
+        $this->assertIsString($discussionView);
+        $this->assertStringContainsString('$thread->messages->first()', $discussionView);
+        $this->assertStringNotContainsString('$thread->messages()->latest()->first()', $discussionView);
     }
 
     public function test_discussion_index_and_show_routes_remain_available(): void

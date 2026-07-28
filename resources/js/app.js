@@ -7,6 +7,7 @@ import './project-create';
 import './project-edit';
 import './project-members';
 import './workspace-members';
+import './workspace-show';
 
 import Alpine from 'alpinejs';
 

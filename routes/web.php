@@ -591,31 +591,38 @@ Route::middleware('auth')->group(function () {
         ->name('discussion.threads.store');
 
     Route::patch('/discussion/{project}/threads/{thread}', [DiscussionController::class, 'updateThread'])
-        ->name('discussion.threads.update');
+        ->name('discussion.threads.update')
+        ->scopeBindings();
 
     Route::delete('/discussion/{project}/threads/{thread}', [DiscussionController::class, 'destroyThread'])
-        ->name('discussion.threads.destroy');
+        ->name('discussion.threads.destroy')
+        ->scopeBindings();
 
     Route::get('/discussion/{project}/{thread}', [DiscussionController::class, 'chat'])
-        ->name('discussion.chat');
+        ->name('discussion.chat')
+        ->scopeBindings();
 
     /*
      * Endpoint canonical penyimpanan pesan.
      * Sebelumnya belum memiliki nama route.
      */
     Route::post('/discussion/{project}/{thread}/messages', [DiscussionController::class, 'storeMessage'])
-        ->name('discussion.messages.store');
+        ->name('discussion.messages.store')
+        ->scopeBindings();
 
     /*
      * Endpoint legacy tetap dipertahankan tanpa mengambil nama route canonical.
      */
-    Route::post('/discussion/{project}/thread/{thread}/messages', [DiscussionController::class, 'storeMessage']);
+    Route::post('/discussion/{project}/thread/{thread}/messages', [DiscussionController::class, 'storeMessage'])
+        ->scopeBindings();
 
     Route::patch('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'updateMessage'])
-        ->name('messages.update');
+        ->name('messages.update')
+        ->scopeBindings();
 
     Route::delete('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'destroyMessage'])
-        ->name('messages.destroy');
+        ->name('messages.destroy')
+        ->scopeBindings();
 
     /*
      * Route dinamis project diletakkan paling bawah.

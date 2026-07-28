@@ -1,3 +1,59 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.urgent-row {
+    position: relative;
+    animation: urgent-pulse 2s infinite;
+}
+
+.urgent-row::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 4px;
+    content: "";
+    background: linear-gradient(180deg, #ef4444, #f97316);
+    border-radius: 0 4px 4px 0;
+    animation: urgent-border-glow 2s infinite;
+}
+
+.urgent-badge {
+    animation: urgent-badge-pulse 1.5s infinite;
+}
+
+@keyframes urgent-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgb(239 68 68 / 10%);
+    }
+
+    50% {
+        box-shadow: 0 0 0 4px rgb(239 68 68 / 0%);
+    }
+}
+
+@keyframes urgent-border-glow {
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+@keyframes urgent-badge-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgb(239 68 68 / 40%);
+        transform: scale(1);
+    }
+
+    50% {
+        box-shadow: 0 0 0 6px rgb(239 68 68 / 0%);
+        transform: scale(1.05);
+    }
+}

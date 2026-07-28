@@ -8,6 +8,7 @@ use App\Models\Invitation;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Services\ActivityLogService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -358,7 +359,7 @@ class WorkspaceInvitationTest extends TestCase
                 $fixture['workspace']->token,
                 $invitation,
             ]))
-            ->assertRedirect();
+            ->assertRedirect(route('workspaces.show', $fixture['workspace']->token).'?tab=members');
 
         Mail::assertQueued(InvitationMail::class, function (InvitationMail $mail) use (&$newToken): bool {
             $newToken = $mail->plainTextToken;
@@ -399,7 +400,7 @@ class WorkspaceInvitationTest extends TestCase
                 $fixture['workspace']->token,
                 $invitation,
             ]))
-            ->assertRedirect();
+            ->assertRedirect(route('workspaces.show', $fixture['workspace']->token).'?tab=members');
 
         $this->assertNotNull($invitation->fresh()->revoked_at);
         $this->get(route('invitations.accept', $plainTextToken))
@@ -743,6 +744,279 @@ class WorkspaceInvitationTest extends TestCase
             ->assertDontSee('p***@example.test');
     }
 
+    public function test_workspace_show_uses_bookmarkable_whitelisted_tabs_with_accessible_active_state(): void
+    {
+        $fixture = $this->workspaceFixture();
+
+        $overview = $this->actingAs($fixture['owner'])
+            ->get(route('workspaces.show', $fixture['workspace']->token))
+            ->assertOk()
+            ->assertSee('Belum ada project');
+        $this->assertActiveWorkspaceTab($overview->getContent(), 'overview');
+        $this->assertTrue($overview->viewData('workspace')->relationLoaded('projects'));
+        $this->assertFalse($overview->viewData('workspace')->relationLoaded('members'));
+
+        $members = $this->actingAs($fixture['owner'])
+            ->get(route('workspaces.show', [
+                'token' => $fixture['workspace']->token,
+                'tab' => 'members',
+            ]))
+            ->assertOk()
+            ->assertSee('Workspace Admins');
+        $this->assertActiveWorkspaceTab($members->getContent(), 'members');
+        $this->assertTrue($members->viewData('workspace')->relationLoaded('members'));
+        $this->assertFalse($members->viewData('workspace')->relationLoaded('projects'));
+
+        $activity = $this->actingAs($fixture['owner'])
+            ->get(route('workspaces.show', [
+                'token' => $fixture['workspace']->token,
+                'tab' => 'activity',
+            ]))
+            ->assertOk()
+            ->assertSee('Workspace Activity Log');
+        $this->assertActiveWorkspaceTab($activity->getContent(), 'activity');
+        $this->assertFalse($activity->viewData('workspace')->relationLoaded('projects'));
+        $this->assertFalse($activity->viewData('workspace')->relationLoaded('members'));
+        $this->assertNotNull($activity->viewData('activities'));
+
+        $invalid = $this->actingAs($fixture['owner'])
+            ->get(route('workspaces.show', [
+                'token' => $fixture['workspace']->token,
+                'tab' => 'chat',
+            ]))
+            ->assertOk()
+            ->assertSee('Belum ada project')
+            ->assertDontSee('Workspace Activity Log');
+        $this->assertActiveWorkspaceTab($invalid->getContent(), 'overview');
+    }
+
+    public function test_workspace_activity_tab_is_scoped_newest_first_and_keeps_legacy_workspace_activity(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $otherWorkspace = Workspace::factory()->for($fixture['owner'], 'creator')->create();
+
+        $older = ActivityLog::create([
+            'user_id' => $fixture['owner']->id,
+            'action' => 'updated',
+            'entity_type' => 'workspace',
+            'entity_id' => $fixture['workspace']->id,
+            'description' => 'Older workspace activity.',
+        ]);
+        $older->forceFill(['created_at' => now()->subMinute()])->save();
+        ActivityLog::create([
+            'user_id' => $fixture['admin']->id,
+            'action' => 'updated',
+            'entity_type' => 'workspace',
+            'entity_id' => $fixture['workspace']->id,
+            'description' => 'Newest workspace activity.',
+        ]);
+        ActivityLog::create([
+            'user_id' => $fixture['owner']->id,
+            'action' => 'updated',
+            'entity_type' => 'workspace',
+            'entity_id' => $otherWorkspace->id,
+            'description' => 'Other workspace activity.',
+        ]);
+
+        $this->actingAs($fixture['member'])
+            ->get(route('workspaces.show', [
+                'token' => $fixture['workspace']->token,
+                'tab' => 'activity',
+            ]))
+            ->assertOk()
+            ->assertSeeInOrder(['Newest workspace activity.', 'Older workspace activity.'])
+            ->assertDontSee('Other workspace activity.');
+    }
+
+    public function test_workspace_activity_tab_applies_event_filters_and_preserves_query_on_pagination(): void
+    {
+        $fixture = $this->workspaceFixture();
+
+        ActivityLogService::workspaceEvent(
+            ActivityLog::EVENT_WORKSPACE_MEMBER_ADDED,
+            $fixture['workspace'],
+            $fixture['owner'],
+            [
+                'target_user_id' => $fixture['member']->id,
+                'target_name' => 'Filtered Member',
+                'role' => Workspace::ROLE_MEMBER,
+                'role_label' => Workspace::roleLabel(Workspace::ROLE_MEMBER),
+                'source' => 'registered_user',
+                'status' => 'active',
+            ],
+        );
+        ActivityLogService::workspaceEvent(
+            ActivityLog::EVENT_WORKSPACE_INVITE_LINK_REGENERATED,
+            $fixture['workspace'],
+            $fixture['owner'],
+            [
+                'target_user_id' => null,
+                'role' => Workspace::ROLE_MEMBER,
+                'role_label' => Workspace::roleLabel(Workspace::ROLE_MEMBER),
+                'source' => 'reusable_link',
+                'status' => 'active',
+            ],
+        );
+
+        for ($index = 0; $index < 16; $index++) {
+            ActivityLogService::workspaceEvent(
+                ActivityLog::EVENT_WORKSPACE_INVITATION_SENT,
+                $fixture['workspace'],
+                $fixture['owner'],
+                [
+                    'invitation_id' => $index + 1,
+                    'target_user_id' => null,
+                    'target_email' => "page-{$index}@example.test",
+                    'role' => Workspace::ROLE_MEMBER,
+                    'role_label' => Workspace::roleLabel(Workspace::ROLE_MEMBER),
+                    'source' => 'email_invitation',
+                    'status' => Invitation::STATUS_PENDING,
+                ],
+            );
+        }
+
+        $filtered = $this->actingAs($fixture['owner'])
+            ->get(route('workspaces.show', [
+                'token' => $fixture['workspace']->token,
+                'tab' => 'activity',
+                'filter' => 'invite_link',
+            ]))
+            ->assertOk()
+            ->assertSee('membuat ulang invite link workspace')
+            ->assertDontSee('Filtered Member');
+        $this->assertSame(1, $filtered->viewData('activities')->total());
+
+        $paginated = $this->actingAs($fixture['owner'])
+            ->get(route('workspaces.show', [
+                'token' => $fixture['workspace']->token,
+                'tab' => 'activity',
+                'filter' => 'invitation',
+                'search' => 'page',
+            ]))
+            ->assertOk();
+        $activities = $paginated->viewData('activities');
+
+        $this->assertSame(16, $activities->total());
+        $this->assertStringContainsString('tab=activity', $activities->nextPageUrl());
+        $this->assertStringContainsString('filter=invitation', $activities->nextPageUrl());
+        $this->assertStringContainsString('search=page', $activities->nextPageUrl());
+    }
+
+    public function test_workspace_activity_tab_enforces_visibility_and_email_privacy_without_exposing_tokens(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $outsider = User::factory()->create();
+        [$invitation, $plainTextToken] = $this->createEmailInvitation(
+            $fixture,
+            'workspace-tab-private@example.test',
+        );
+        $hashedToken = $invitation->getRawOriginal('token');
+        $activityUrl = route('workspaces.show', [
+            'token' => $fixture['workspace']->token,
+            'tab' => 'activity',
+        ]);
+
+        foreach ([$fixture['owner'], $fixture['admin']] as $manager) {
+            $this->actingAs($manager)
+                ->get($activityUrl)
+                ->assertOk()
+                ->assertSee('workspace-tab-private@example.test')
+                ->assertDontSee($plainTextToken)
+                ->assertDontSee($hashedToken);
+        }
+
+        $this->actingAs($fixture['member'])
+            ->get($activityUrl)
+            ->assertOk()
+            ->assertSee('w***@example.test')
+            ->assertDontSee('workspace-tab-private@example.test')
+            ->assertDontSee($plainTextToken)
+            ->assertDontSee($hashedToken);
+
+        $this->actingAs($outsider)
+            ->get($activityUrl)
+            ->assertForbidden();
+    }
+
+    public function test_workspace_activity_list_eager_loads_actors_without_query_growth(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $activityUrl = route('workspaces.show', [
+            'token' => $fixture['workspace']->token,
+            'tab' => 'activity',
+        ]);
+
+        ActivityLog::create([
+            'user_id' => $fixture['owner']->id,
+            'action' => 'updated',
+            'entity_type' => 'workspace',
+            'entity_id' => $fixture['workspace']->id,
+            'description' => 'Baseline activity.',
+        ]);
+
+        foreach (User::factory()->count(8)->create() as $actor) {
+            ActivityLog::create([
+                'user_id' => $actor->id,
+                'action' => 'updated',
+                'entity_type' => 'workspace',
+                'entity_id' => $fixture['workspace']->id,
+                'description' => "Activity by {$actor->name}.",
+            ]);
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->actingAs($fixture['owner'])->get($activityUrl)->assertOk();
+        $actorQueries = collect(DB::getQueryLog())
+            ->filter(
+                fn (array $query): bool => str_contains(
+                    $query['query'],
+                    'select "id", "name" from "users" where "users"."id" in',
+                ),
+            );
+        DB::disableQueryLog();
+
+        $this->assertCount(1, $actorQueries);
+    }
+
+    public function test_workspace_member_actions_redirect_back_to_members_tab(): void
+    {
+        $fixture = $this->workspaceFixture();
+        $candidate = User::factory()->create();
+        $membersUrl = route('workspaces.show', $fixture['workspace']->token).'?tab=members';
+
+        $this->actingAs($fixture['owner'])
+            ->post(route('workspaces.members.store', $fixture['workspace']->token), [
+                'user_id' => $candidate->id,
+                'role' => Workspace::ROLE_MEMBER,
+            ])
+            ->assertRedirect($membersUrl);
+
+        $this->actingAs($fixture['owner'])
+            ->patch(route('workspaces.members.update', [
+                $fixture['workspace']->token,
+                $candidate,
+            ]), ['role' => Workspace::ROLE_ADMIN])
+            ->assertRedirect($membersUrl);
+
+        $this->actingAs($fixture['owner'])
+            ->post(route('workspaces.invite.generate', $fixture['workspace']->token))
+            ->assertRedirect($membersUrl);
+        $this->actingAs($fixture['owner'])
+            ->post(route('workspaces.invite.reset', $fixture['workspace']->token))
+            ->assertRedirect($membersUrl);
+        $this->actingAs($fixture['owner'])
+            ->delete(route('workspaces.invite.revoke', $fixture['workspace']->token))
+            ->assertRedirect($membersUrl);
+
+        $this->actingAs($fixture['owner'])
+            ->delete(route('workspaces.members.destroy', [
+                $fixture['workspace']->token,
+                $candidate,
+            ]))
+            ->assertRedirect($membersUrl);
+    }
+
     public function test_project_activity_presentation_remains_unchanged(): void
     {
         $fixture = $this->workspaceFixture();
@@ -766,6 +1040,7 @@ class WorkspaceInvitationTest extends TestCase
     public function test_invitation_ui_uses_partials_central_roles_and_accessible_safe_javascript(): void
     {
         $root = resource_path('views/workspaces/partials/members');
+        $showRoot = resource_path('views/workspaces/partials/show');
 
         foreach ([
             '_invite-modal.blade.php',
@@ -783,6 +1058,24 @@ class WorkspaceInvitationTest extends TestCase
         $this->assertStringNotContainsString('value="owner"', $modal);
         $this->assertStringContainsString('textContent', $javascript);
         $this->assertStringNotContainsString('innerHTML', $javascript);
+
+        foreach ([
+            '_tabs.blade.php',
+            '_overview.blade.php',
+            'members/_index.blade.php',
+            'activity/_index.blade.php',
+            'activity/_filters.blade.php',
+            'activity/_activity-list.blade.php',
+            'activity/_activity-item.blade.php',
+            'activity/_empty-state.blade.php',
+        ] as $file) {
+            $this->assertFileExists($showRoot.'/'.$file);
+        }
+
+        $showView = file_get_contents(resource_path('views/workspaces/show.blade.php'));
+        $this->assertLessThan(150, count(file(resource_path('views/workspaces/show.blade.php'))));
+        $this->assertStringNotContainsString('<script', $showView);
+        $this->assertFileExists(resource_path('js/workspace-show.js'));
     }
 
     /**
@@ -833,7 +1126,7 @@ class WorkspaceInvitationTest extends TestCase
                 'email' => $email,
                 'role' => $role,
             ])
-            ->assertRedirect();
+            ->assertRedirect(route('workspaces.show', $fixture['workspace']->token).'?tab=members');
 
         Mail::assertQueued(InvitationMail::class, function (InvitationMail $mail) use (&$plainTextToken): bool {
             $plainTextToken = $mail->plainTextToken;
@@ -853,5 +1146,17 @@ class WorkspaceInvitationTest extends TestCase
             ->where('new_value->event', $event)
             ->latest('id')
             ->firstOrFail();
+    }
+
+    private function assertActiveWorkspaceTab(string $html, string $tab): void
+    {
+        $document = new \DOMDocument;
+        @$document->loadHTML($html);
+        $xpath = new \DOMXPath($document);
+
+        $this->assertSame(
+            1,
+            $xpath->query("//a[@aria-current='page' and contains(@href, 'tab={$tab}')]")->length,
+        );
     }
 }

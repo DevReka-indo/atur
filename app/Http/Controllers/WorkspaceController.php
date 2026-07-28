@@ -9,12 +9,34 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Services\ActivityLogService;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class WorkspaceController extends Controller
 {
+    private const SHOW_TABS = ['overview', 'members', 'activity'];
+
+    private const WORKSPACE_ACTIVITY_EVENT_GROUPS = [
+        'member' => [
+            ActivityLog::EVENT_WORKSPACE_MEMBER_ADDED,
+            ActivityLog::EVENT_WORKSPACE_MEMBER_ROLE_CHANGED,
+            ActivityLog::EVENT_WORKSPACE_MEMBER_REMOVED,
+        ],
+        'invitation' => [
+            ActivityLog::EVENT_WORKSPACE_INVITATION_SENT,
+            ActivityLog::EVENT_WORKSPACE_INVITATION_RESENT,
+            ActivityLog::EVENT_WORKSPACE_INVITATION_REVOKED,
+            ActivityLog::EVENT_WORKSPACE_INVITATION_ACCEPTED,
+        ],
+        'invite_link' => [
+            ActivityLog::EVENT_WORKSPACE_INVITE_LINK_REGENERATED,
+            ActivityLog::EVENT_WORKSPACE_INVITE_LINK_DISABLED,
+            ActivityLog::EVENT_WORKSPACE_JOINED_VIA_INVITE_LINK,
+        ],
+    ];
+
     private function findByToken(string $token): Workspace
     {
         return Workspace::where('token', $token)->firstOrFail();
@@ -72,55 +94,152 @@ class WorkspaceController extends Controller
             ->with('success', 'Workspace created successfully!');
     }
 
-    public function show(string $token)
+    public function show(Request $request, string $token)
     {
         $workspace = $this->findByToken($token);
-        $user = Auth::user();
+        $user = $request->user();
 
         if (! $user->isSuperAdmin() && ! $workspace->isMember($user)) {
             abort(403, 'You do not have access to this workspace.');
         }
 
-        $workspace->load([
-            'projects' => function ($query) {
-                $query->withCount('tasks')
-                    ->with([
-                        'tasks.statusWeight',
-                        'members:id,name',
-                    ])
-                    ->orderBy('created_at', 'desc');
-            },
-            'members' => function ($query) {
-                $query->withPivot('role', 'joined_at');
-            },
-            'invitations' => function ($query) {
-                $query->pending()
-                    ->where('expires_at', '>', now())
-                    ->with('inviter:id,name')
-                    ->latest();
-            },
-        ]);
-
-        $workspace->setRelation(
-            'projects',
-            $workspace->projects->sortBy(function ($project) {
-                $totalWeight = $project->tasks->sum('weight');
-                $earnedValue = $project->tasks->sum(
-                    fn ($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
-                );
-                $progress = $totalWeight > 0 ? ($earnedValue / $totalWeight) * 100 : 0;
-
-                if ($project->status === 'urgent' && $progress < 100) {
-                    return 0;
-                }
-
-                return 1;
-            })->values()
-        );
-
+        $requestedTab = $request->string('tab')->toString();
+        $activeTab = in_array($requestedTab, self::SHOW_TABS, true)
+            ? $requestedTab
+            : 'overview';
         $currentRole = $workspace->roleForUser($user);
+        $canManageMembers = in_array($currentRole, [Workspace::ROLE_OWNER, Workspace::ROLE_ADMIN], true);
+        $canCreateProject = $canManageMembers;
+        $canViewInvitationEmail = $canManageMembers;
+        $activities = null;
+        $activityFilter = 'all';
+        $activitySearch = '';
 
-        return view('workspaces.show', compact('workspace', 'currentRole'));
+        $workspace->loadCount('projects');
+
+        if ($activeTab === 'overview') {
+            $workspace->load([
+                'projects' => function ($query) {
+                    $query->withCount('tasks')
+                        ->with([
+                            'tasks.statusWeight',
+                            'members:id,name',
+                        ])
+                        ->latest();
+                },
+            ]);
+
+            $workspace->setRelation(
+                'projects',
+                $workspace->projects->sortBy(function ($project) {
+                    $totalWeight = $project->tasks->sum('weight');
+                    $earnedValue = $project->tasks->sum(
+                        fn ($task) => $task->weight * ($task->statusWeight->weight_value ?? 0)
+                    );
+                    $progress = $totalWeight > 0 ? ($earnedValue / $totalWeight) * 100 : 0;
+
+                    if ($project->status === 'urgent' && $progress < 100) {
+                        return 0;
+                    }
+
+                    return 1;
+                })->values()
+            );
+        }
+
+        if ($activeTab === 'members') {
+            $workspace->load([
+                'members' => function ($query) {
+                    $query->withPivot('role', 'joined_at');
+                },
+                'invitations' => function ($query) {
+                    $query->pending()
+                        ->where('expires_at', '>', now())
+                        ->with('inviter:id,name')
+                        ->latest();
+                },
+            ]);
+        }
+
+        if ($activeTab === 'activity') {
+            $activityFilter = array_key_exists(
+                $request->string('filter')->toString(),
+                self::WORKSPACE_ACTIVITY_EVENT_GROUPS,
+            )
+                ? $request->string('filter')->toString()
+                : 'all';
+            $activitySearch = $request->string('search')->trim()->limit(100)->toString();
+            $activities = $this->workspaceActivities(
+                $workspace,
+                $activityFilter,
+                $activitySearch,
+                $canViewInvitationEmail,
+            );
+        }
+
+        return view('workspaces.show', compact(
+            'workspace',
+            'currentRole',
+            'activeTab',
+            'canManageMembers',
+            'canCreateProject',
+            'canViewInvitationEmail',
+            'activities',
+            'activityFilter',
+            'activitySearch',
+        ));
+    }
+
+    private function workspaceActivities(
+        Workspace $workspace,
+        string $filter,
+        string $search,
+        bool $canViewInvitationEmail,
+    ): LengthAwarePaginator {
+        return ActivityLog::query()
+            ->select([
+                'id',
+                'user_id',
+                'action',
+                'entity_type',
+                'entity_id',
+                'description',
+                'old_value',
+                'new_value',
+                'created_at',
+                'updated_at',
+            ])
+            ->with('user:id,name')
+            ->where('entity_type', 'workspace')
+            ->where('entity_id', $workspace->id)
+            ->when(
+                $filter !== 'all',
+                fn ($query) => $query->whereIn(
+                    'new_value->event',
+                    self::WORKSPACE_ACTIVITY_EVENT_GROUPS[$filter],
+                ),
+            )
+            ->when($search !== '', function ($query) use ($search, $canViewInvitationEmail): void {
+                $likeSearch = "%{$search}%";
+
+                $query->where(function ($searchQuery) use (
+                    $likeSearch,
+                    $canViewInvitationEmail,
+                ): void {
+                    $searchQuery
+                        ->whereHas('user', fn ($userQuery) => $userQuery->where('name', 'like', $likeSearch))
+                        ->orWhere('new_value->target_name', 'like', $likeSearch);
+
+                    if ($canViewInvitationEmail) {
+                        $searchQuery
+                            ->orWhere('description', 'like', $likeSearch)
+                            ->orWhere('new_value->target_email', 'like', $likeSearch);
+                    }
+                });
+            })
+            ->latest()
+            ->paginate(15)
+            ->withQueryString();
     }
 
     public function edit(string $token)
@@ -221,7 +340,8 @@ class WorkspaceController extends Controller
             );
         });
 
-        return back()->with('success', 'Member added successfully.');
+        return redirect(route('workspaces.show', $workspace->token).'?tab=members')
+            ->with('success', 'Member added successfully.');
     }
 
     public function updateMemberRole(Request $request, string $token, User $user)
@@ -451,7 +571,8 @@ class WorkspaceController extends Controller
             );
         });
 
-        return back()->with('success', 'Invite link berhasil dibuat!');
+        return redirect(route('workspaces.show', $workspace->token).'?tab=members')
+            ->with('success', 'Invite link berhasil dibuat!');
     }
 
     public function resetInviteLink(string $token)
@@ -480,7 +601,8 @@ class WorkspaceController extends Controller
             );
         });
 
-        return back()->with('success', 'Invite link berhasil direset. Link lama tidak berlaku lagi.');
+        return redirect(route('workspaces.show', $workspace->token).'?tab=members')
+            ->with('success', 'Invite link berhasil direset. Link lama tidak berlaku lagi.');
     }
 
     public function revokeInviteLink(string $token)
@@ -509,7 +631,8 @@ class WorkspaceController extends Controller
             );
         });
 
-        return back()->with('success', 'Invite link berhasil dinonaktifkan.');
+        return redirect(route('workspaces.show', $workspace->token).'?tab=members')
+            ->with('success', 'Invite link berhasil dinonaktifkan.');
     }
 
     public function managementIndex()

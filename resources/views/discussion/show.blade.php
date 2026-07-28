@@ -73,7 +73,7 @@
             @forelse($threads as $index => $thread)
                 @php
                     $color    = $avatarColors[$index % count($avatarColors)];
-                    $lastMsg  = $thread->messages()->latest()->first();
+                    $lastMsg  = $thread->messages->first();
                     $canDelete = $isPrivileged;
                 @endphp
 
@@ -566,7 +566,13 @@
 
                     const preview = document.getElementById(`preview-${thread.id}`);
                     if (preview && thread.last_message) {
-                        preview.innerHTML = `<span class="font-medium text-gray-700">${thread.last_message.user_name}:</span> ${thread.last_message.content}`;
+                        const sender = document.createElement('span');
+                        sender.className = 'font-medium text-gray-700';
+                        sender.textContent = `${thread.last_message.user_name}:`;
+                        preview.replaceChildren(
+                            sender,
+                            document.createTextNode(` ${thread.last_message.content}`)
+                        );
                     }
                 });
 

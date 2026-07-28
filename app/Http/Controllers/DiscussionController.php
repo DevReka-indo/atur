@@ -2,13 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\Project;
 use App\Models\ProjectThread;
 use App\Models\ProjectThreadMessage;
 use App\Models\ThreadUserRead;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Models\ActivityLog;
 
 class DiscussionController extends Controller
 {
@@ -19,10 +19,10 @@ class DiscussionController extends Controller
 
         $projects = Project::withCount('threads')
             ->where(function ($q) use ($user) {
-                $q->whereHas('members', fn($q) => $q->where('user_id', $user->id))
+                $q->whereHas('members', fn ($q) => $q->where('user_id', $user->id))
                     ->orWhere('created_by', $user->id);
             })
-            ->with(['threads.userReads' => fn($q) => $q->where('user_id', $user->id)])
+            ->with(['threads.userReads' => fn ($q) => $q->where('user_id', $user->id)])
             ->get()
             ->map(function ($project) use ($user) {
                 $project->unread_total = 0;
@@ -34,6 +34,7 @@ class DiscussionController extends Controller
                         ->where('user_id', '!=', $user->id)
                         ->count();
                 }
+
                 return $project;
             })
             ->sortByDesc(function ($project) {
@@ -59,8 +60,8 @@ class DiscussionController extends Controller
             ->withCount('messages')
             ->with([
                 'creator',
-                'messages' => fn($q) => $q->with('user')->latest()->limit(1),
-                'userReads' => fn($q) => $q->where('user_id', $user->id), // ← tambah ini
+                'messages' => fn ($q) => $q->with('user')->latest()->limit(1),
+                'userReads' => fn ($q) => $q->where('user_id', $user->id), // ← tambah ini
             ])
             ->get()
             ->map(function ($thread) use ($user) {
@@ -69,6 +70,7 @@ class DiscussionController extends Controller
                     ->where('created_at', '>', $lastRead)
                     ->where('user_id', '!=', $user->id)
                     ->count();
+
                 return $thread;
             })
             ->sortByDesc(function ($thread) {
@@ -76,6 +78,7 @@ class DiscussionController extends Controller
                     return now()->timestamp + $thread->unread_count;
                 }
                 $lastMsg = $thread->messages->first();
+
                 return $lastMsg ? $lastMsg->created_at->timestamp : $thread->created_at->timestamp;
             })
             ->values();
@@ -108,15 +111,15 @@ class DiscussionController extends Controller
 
         $thread = $project->threads()->create([
             'user_id' => Auth::id(),
-            'title'   => $request->name,
+            'title' => $request->name,
         ]);
 
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'created',
+            'user_id' => Auth::id(),
+            'action' => 'created',
             'entity_type' => 'discussion',
-            'entity_id'   => $thread->id,
-            'description' => 'Membuat topik diskusi: ' . $thread->title . ' di project ' . $project->name,
+            'entity_id' => $thread->id,
+            'description' => 'Membuat topik diskusi: '.$thread->title.' di project '.$project->name,
         ]);
 
         return redirect()->route('discussion.show', $project);
@@ -137,11 +140,11 @@ class DiscussionController extends Controller
         $message->load('user');
 
         return response()->json([
-            'id'      => $message->id,
+            'id' => $message->id,
             'content' => $message->content,
-            'time'    => $message->created_at->format('H:i'),
-            'user'    => [
-                'id'   => $message->user->id,
+            'time' => $message->created_at->format('H:i'),
+            'user' => [
+                'id' => $message->user->id,
                 'name' => $message->user->name,
             ],
         ]);
@@ -150,6 +153,7 @@ class DiscussionController extends Controller
     // Edit pesan
     public function updateMessage(Request $request, Project $project, ProjectThread $thread, ProjectThreadMessage $message)
     {
+        abort_unless($project->isMember(Auth::user()), 403);
         abort_unless($message->user_id === Auth::id(), 403);
 
         $request->validate(['content' => 'required|string|max:1000']);
@@ -159,7 +163,7 @@ class DiscussionController extends Controller
         ]);
 
         return response()->json([
-            'id'      => $message->id,
+            'id' => $message->id,
             'content' => $message->content,
         ]);
     }
@@ -167,6 +171,7 @@ class DiscussionController extends Controller
     // Hapus pesan
     public function destroyMessage(Project $project, ProjectThread $thread, ProjectThreadMessage $message)
     {
+        abort_unless($project->isMember(Auth::user()), 403);
         abort_unless($message->user_id === Auth::id(), 403);
 
         $message->delete();
@@ -182,8 +187,8 @@ class DiscussionController extends Controller
 
         $threads = $project->threads()
             ->with([
-                'userReads' => fn($q) => $q->where('user_id', $user->id),
-                'messages' => fn($q) => $q->with('user')->latest()->limit(1),
+                'userReads' => fn ($q) => $q->where('user_id', $user->id),
+                'messages' => fn ($q) => $q->with('user')->latest()->limit(1),
             ])
             ->get()
             ->map(function ($thread) use ($user) {
@@ -191,16 +196,16 @@ class DiscussionController extends Controller
                 $lastMsg = $thread->messages->first();
 
                 return [
-                    'id'           => $thread->id,
+                    'id' => $thread->id,
                     'unread_count' => $thread->messages()
                         ->where('created_at', '>', $lastRead)
                         ->where('user_id', '!=', $user->id)
                         ->count(),
                     'last_message' => $lastMsg ? [
-                        'content'    => \Str::limit($lastMsg->content, 70),
-                        'user_name'  => $lastMsg->user->name ?? 'Unknown',
+                        'content' => \Str::limit($lastMsg->content, 70),
+                        'user_name' => $lastMsg->user->name ?? 'Unknown',
                         'created_at' => $lastMsg->created_at,
-                        'time'       => $lastMsg->created_at->isToday()
+                        'time' => $lastMsg->created_at->isToday()
                             ? $lastMsg->created_at->format('H:i')
                             : ($lastMsg->created_at->isYesterday()
                                 ? 'Yesterday'
@@ -219,10 +224,10 @@ class DiscussionController extends Controller
         $count = 0;
 
         $projects = Project::where(function ($q) use ($user) {
-            $q->whereHas('members', fn($q) => $q->where('user_id', $user->id))
+            $q->whereHas('members', fn ($q) => $q->where('user_id', $user->id))
                 ->orWhere('created_by', $user->id);
         })
-            ->with(['threads.userReads' => fn($q) => $q->where('user_id', $user->id)])
+            ->with(['threads.userReads' => fn ($q) => $q->where('user_id', $user->id)])
             ->get();
 
         foreach ($projects as $project) {
@@ -239,7 +244,6 @@ class DiscussionController extends Controller
         return response()->json(['count' => $count]);
     }
 
-
     public function destroyThread(Project $project, ProjectThread $thread)
     {
         abort_unless($project->isMember(Auth::user()), 403);
@@ -252,11 +256,11 @@ class DiscussionController extends Controller
         abort_unless($isPrivileged || $thread->user_id === Auth::id(), 403);
 
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'deleted',
+            'user_id' => Auth::id(),
+            'action' => 'deleted',
             'entity_type' => 'discussion',
-            'entity_id'   => $thread->id,
-            'description' => 'Menghapus topik diskusi: ' . $thread->title . ' di project ' . $project->name,
+            'entity_id' => $thread->id,
+            'description' => 'Menghapus topik diskusi: '.$thread->title.' di project '.$project->name,
         ]);
 
         $thread->messages()->delete();
@@ -281,11 +285,11 @@ class DiscussionController extends Controller
         $thread->update(['title' => $request->name]);
 
         ActivityLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'updated',
+            'user_id' => Auth::id(),
+            'action' => 'updated',
             'entity_type' => 'discussion',
-            'entity_id'   => $thread->id,
-            'description' => 'Mengubah topik diskusi: ' . $thread->title . ' di project ' . $project->name,
+            'entity_id' => $thread->id,
+            'description' => 'Mengubah topik diskusi: '.$thread->title.' di project '.$project->name,
         ]);
 
         return redirect()->route('discussion.show', $project)
