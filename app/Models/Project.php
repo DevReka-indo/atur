@@ -188,7 +188,33 @@ class Project extends Model
 
     public function canCreateThread(User $user): bool
     {
-        return $this->canContribute($user);
+        return $this->canManageDiscussionThreads($user);
+    }
+
+    public function canViewDiscussions(User $user): bool
+    {
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return in_array($this->roleForUser($user), [
+            self::ROLE_MANAGER,
+            self::ROLE_MEMBER,
+        ], true);
+    }
+
+    public function canPostDiscussionMessages(User $user): bool
+    {
+        return $this->canViewDiscussions($user);
+    }
+
+    public function canManageDiscussionThreads(User $user): bool
+    {
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return $this->roleForUser($user) === self::ROLE_MANAGER;
     }
 
     public function isViewer(User $user): bool

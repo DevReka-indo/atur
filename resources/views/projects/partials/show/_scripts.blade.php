@@ -12,6 +12,7 @@
         document
             .querySelectorAll('.project-tab-button')
             .forEach((button) => {
+                button.removeAttribute('aria-current');
                 button.classList.remove(
                     'bg-[#ADE8F4]',
                     'text-gray-700'
@@ -36,6 +37,7 @@
         );
 
         if (selectedButton) {
+            selectedButton.setAttribute('aria-current', 'page');
             selectedButton.classList.remove(
                 'text-gray-600',
                 'hover:text-gray-900'

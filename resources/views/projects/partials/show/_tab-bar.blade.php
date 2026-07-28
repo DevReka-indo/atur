@@ -5,6 +5,7 @@
                 type="button"
                 onclick="switchProjectTab('tasks')"
                 data-project-tab="tasks"
+                @if ($currentTab === 'tasks') aria-current="page" @endif
                 class="project-tab-button whitespace-nowrap rounded-lg px-4 py-2.5 text-sm
                     font-medium transition-all
                     {{ $currentTab === 'tasks'
@@ -17,10 +18,29 @@
                 </span>
             </button>
 
+            @if ($canViewDiscussions ?? false)
+                <a
+                    href="{{ route('projects.show', ['token' => $project->token, 'tab' => 'discussions']) }}"
+                    data-project-tab="discussions"
+                    @if ($currentTab === 'discussions') aria-current="page" @endif
+                    class="project-tab-button whitespace-nowrap rounded-lg px-4 py-2.5 text-sm
+                        font-medium transition-all
+                        {{ $currentTab === 'discussions'
+                            ? 'bg-[#ADE8F4] text-gray-700'
+                            : 'text-gray-600 hover:text-gray-900' }}"
+                >
+                    <span class="flex items-center gap-2">
+                        <i class="fa-solid fa-comments"></i>
+                        Discussions
+                    </span>
+                </a>
+            @endif
+
             <button
                 type="button"
                 onclick="switchProjectTab('members')"
                 data-project-tab="members"
+                @if ($currentTab === 'members') aria-current="page" @endif
                 class="project-tab-button whitespace-nowrap rounded-lg px-4 py-2.5 text-sm
                     font-medium transition-all
                     {{ $currentTab === 'members'
@@ -37,6 +57,7 @@
                 type="button"
                 onclick="switchProjectTab('chart')"
                 data-project-tab="chart"
+                @if ($currentTab === 'chart') aria-current="page" @endif
                 class="project-tab-button whitespace-nowrap rounded-lg px-4 py-2.5 text-sm
                     font-medium transition-all
                     {{ $currentTab === 'chart'

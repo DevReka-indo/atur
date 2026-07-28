@@ -108,7 +108,7 @@
                     </span>
                 </a>
 
-                {{-- Discussion --}}
+                {{-- Project Discussions --}}
                 <a href="{{ route('discussion.index') }}"
                     class="flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all duration-200
                         {{ request()->routeIs('discussion.*')
@@ -132,7 +132,7 @@
                     </div>
 
                     <span class="text-sm font-medium">
-                        Discussion
+                        Project Discussions
                     </span>
                 </a>
 

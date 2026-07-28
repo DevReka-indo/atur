@@ -7,93 +7,50 @@ use App\Models\Project;
 use App\Models\ProjectThread;
 use App\Models\ProjectThreadMessage;
 use App\Models\ThreadUserRead;
+use App\Services\ProjectDiscussionService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\View\View;
 
 class DiscussionController extends Controller
 {
-    // List semua project
-    public function index()
+    public function __construct(
+        private ProjectDiscussionService $projectDiscussionService,
+    ) {}
+
+    public function index(Request $request): View
     {
-        $user = Auth::user();
+        $projects = $this->projectDiscussionService->projectsForHub(
+            $request->user(),
+            $request->string('search')->trim()->toString() ?: null,
+            $request->boolean('unread'),
+        );
 
-        $projects = Project::withCount('threads')
-            ->where(function ($q) use ($user) {
-                $q->whereHas('members', fn ($q) => $q->where('user_id', $user->id))
-                    ->orWhere('created_by', $user->id);
-            })
-            ->with(['threads.userReads' => fn ($q) => $q->where('user_id', $user->id)])
-            ->get()
-            ->map(function ($project) use ($user) {
-                $project->unread_total = 0;
-                foreach ($project->threads as $thread) {
-                    $lastRead = $thread->userReads->first()?->last_read_at
-                        ?? now()->subYears(10);
-                    $project->unread_total += $thread->messages()
-                        ->where('created_at', '>', $lastRead)
-                        ->where('user_id', '!=', $user->id)
-                        ->count();
-                }
-
-                return $project;
-            })
-            ->sortByDesc(function ($project) {
-                if ($project->unread_total > 0) {
-                    return now()->timestamp + $project->unread_total;
-                }
-
-                return $project->created_at->timestamp;
-            })
-            ->values();
-
-        return view('discussion.index', compact('projects'));
+        return view('discussion.index', [
+            'projects' => $projects,
+            'search' => $request->string('search')->toString(),
+            'unreadOnly' => $request->boolean('unread'),
+        ]);
     }
 
-    // List threads/topics per project
-    public function show(Project $project)
+    public function show(Request $request, Project $project): View
     {
-        abort_unless($project->isMember(Auth::user()), 403);
+        abort_unless($project->canViewDiscussions($request->user()), 403);
 
-        $user = Auth::user(); // ← tambah ini
-
-        $threads = $project->threads()
-            ->withCount('messages')
-            ->with([
-                'creator',
-                'messages' => fn ($q) => $q->with('user')->latest()->limit(1),
-                'userReads' => fn ($q) => $q->where('user_id', $user->id), // ← tambah ini
-            ])
-            ->get()
-            ->map(function ($thread) use ($user) {
-                $lastRead = $thread->userReads->first()?->last_read_at ?? now()->subYears(10);
-                $thread->unread_count = $thread->messages()
-                    ->where('created_at', '>', $lastRead)
-                    ->where('user_id', '!=', $user->id)
-                    ->count();
-
-                return $thread;
-            })
-            ->sortByDesc(function ($thread) {
-                if ($thread->unread_count > 0) {
-                    return now()->timestamp + $thread->unread_count;
-                }
-                $lastMsg = $thread->messages->first();
-
-                return $lastMsg ? $lastMsg->created_at->timestamp : $thread->created_at->timestamp;
-            })
-            ->values();
-
-        return view('discussion.show', compact('project', 'threads'));
+        return view('discussion.show', [
+            'project' => $project->loadMissing('workspace:id,name'),
+            'threads' => $this->projectDiscussionService->threadsForProject($project, $request->user()),
+            'discussionContext' => 'hub',
+        ]);
     }
 
-    // Chat messages per thread
-    public function chat(Project $project, ProjectThread $thread)
+    public function chat(Request $request, Project $project, ProjectThread $thread): View
     {
-        abort_unless($project->isMember(Auth::user()), 403);
+        abort_unless($project->canViewDiscussions($request->user()), 403);
 
-        // ← tambah ini: tandai sudah dibaca
         ThreadUserRead::updateOrCreate(
-            ['thread_id' => $thread->id, 'user_id' => Auth::id()],
+            ['thread_id' => $thread->id, 'user_id' => $request->user()->id],
             ['last_read_at' => now()]
         );
 
@@ -103,38 +60,38 @@ class DiscussionController extends Controller
     }
 
     // Buat thread baru
-    public function storeThread(Request $request, Project $project)
+    public function storeThread(Request $request, Project $project): RedirectResponse
     {
-        abort_unless($project->canCreateThread(Auth::user()), 403);
+        abort_unless($project->canManageDiscussionThreads($request->user()), 403);
 
-        $request->validate(['name' => 'required|string|max:255']);
+        $validated = $request->validate(['name' => 'required|string|max:255']);
 
         $thread = $project->threads()->create([
-            'user_id' => Auth::id(),
-            'title' => $request->name,
+            'user_id' => $request->user()->id,
+            'title' => $validated['name'],
         ]);
 
         ActivityLog::create([
-            'user_id' => Auth::id(),
+            'user_id' => $request->user()->id,
             'action' => 'created',
             'entity_type' => 'discussion',
             'entity_id' => $thread->id,
-            'description' => 'Membuat topik diskusi: '.$thread->title.' di project '.$project->name,
+            'description' => 'Membuat Project Discussion: '.$thread->title.' di project '.$project->name,
         ]);
 
-        return redirect()->route('discussion.show', $project);
+        return $this->redirectAfterThreadAction($request, $project);
     }
 
     // Kirim pesan
-    public function storeMessage(Request $request, Project $project, ProjectThread $thread)
+    public function storeMessage(Request $request, Project $project, ProjectThread $thread): JsonResponse
     {
-        abort_unless($project->isMember(Auth::user()), 403);
+        abort_unless($project->canPostDiscussionMessages($request->user()), 403);
 
-        $request->validate(['content' => 'required|string|max:1000']);
+        $validated = $request->validate(['content' => 'required|string|max:1000']);
 
         $message = $thread->messages()->create([
-            'user_id' => Auth::id(),
-            'content' => $request->content,
+            'user_id' => $request->user()->id,
+            'content' => $validated['content'],
         ]);
 
         $message->load('user');
@@ -151,15 +108,15 @@ class DiscussionController extends Controller
     }
 
     // Edit pesan
-    public function updateMessage(Request $request, Project $project, ProjectThread $thread, ProjectThreadMessage $message)
+    public function updateMessage(Request $request, Project $project, ProjectThread $thread, ProjectThreadMessage $message): JsonResponse
     {
-        abort_unless($project->isMember(Auth::user()), 403);
-        abort_unless($message->user_id === Auth::id(), 403);
+        abort_unless($project->canPostDiscussionMessages($request->user()), 403);
+        abort_unless($message->user_id === $request->user()->id, 403);
 
-        $request->validate(['content' => 'required|string|max:1000']);
+        $validated = $request->validate(['content' => 'required|string|max:1000']);
 
         $message->update([
-            'content' => $request->content,
+            'content' => $validated['content'],
         ]);
 
         return response()->json([
@@ -169,47 +126,37 @@ class DiscussionController extends Controller
     }
 
     // Hapus pesan
-    public function destroyMessage(Project $project, ProjectThread $thread, ProjectThreadMessage $message)
+    public function destroyMessage(Request $request, Project $project, ProjectThread $thread, ProjectThreadMessage $message): JsonResponse
     {
-        abort_unless($project->isMember(Auth::user()), 403);
-        abort_unless($message->user_id === Auth::id(), 403);
+        abort_unless($project->canPostDiscussionMessages($request->user()), 403);
+        abort_unless($message->user_id === $request->user()->id, 403);
 
         $message->delete();
 
         return response()->json(['success' => true]);
     }
 
-    public function unreadCounts(Project $project)
+    public function unreadCounts(Request $request, Project $project): JsonResponse
     {
-        abort_unless($project->isMember(Auth::user()), 403);
+        abort_unless($project->canViewDiscussions($request->user()), 403);
 
-        $user = Auth::user();
-
-        $threads = $project->threads()
-            ->with([
-                'userReads' => fn ($q) => $q->where('user_id', $user->id),
-                'messages' => fn ($q) => $q->with('user')->latest()->limit(1),
-            ])
-            ->get()
-            ->map(function ($thread) use ($user) {
-                $lastRead = $thread->userReads->first()?->last_read_at ?? now()->subYears(10);
-                $lastMsg = $thread->messages->first();
+        $threads = $this->projectDiscussionService
+            ->threadsForProject($project, $request->user())
+            ->map(function (ProjectThread $thread): array {
+                $lastMessage = $thread->messages->first();
 
                 return [
                     'id' => $thread->id,
-                    'unread_count' => $thread->messages()
-                        ->where('created_at', '>', $lastRead)
-                        ->where('user_id', '!=', $user->id)
-                        ->count(),
-                    'last_message' => $lastMsg ? [
-                        'content' => \Str::limit($lastMsg->content, 70),
-                        'user_name' => $lastMsg->user->name ?? 'Unknown',
-                        'created_at' => $lastMsg->created_at,
-                        'time' => $lastMsg->created_at->isToday()
-                            ? $lastMsg->created_at->format('H:i')
-                            : ($lastMsg->created_at->isYesterday()
+                    'unread_count' => $thread->unread_count,
+                    'last_message' => $lastMessage ? [
+                        'content' => \Str::limit($lastMessage->content, 70),
+                        'user_name' => $lastMessage->user->name ?? 'Unknown',
+                        'created_at' => $lastMessage->created_at,
+                        'time' => $lastMessage->created_at->isToday()
+                            ? $lastMessage->created_at->format('H:i')
+                            : ($lastMessage->created_at->isYesterday()
                                 ? 'Yesterday'
-                                : $lastMsg->created_at->format('d M Y')),
+                                : $lastMessage->created_at->format('d M Y')),
                     ] : null,
                 ];
             });
@@ -217,82 +164,60 @@ class DiscussionController extends Controller
         return response()->json($threads);
     }
 
-    // notifikasi di sidebar
-    public function unreadSidebar()
+    public function unreadSidebar(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $count = 0;
-
-        $projects = Project::where(function ($q) use ($user) {
-            $q->whereHas('members', fn ($q) => $q->where('user_id', $user->id))
-                ->orWhere('created_by', $user->id);
-        })
-            ->with(['threads.userReads' => fn ($q) => $q->where('user_id', $user->id)])
-            ->get();
-
-        foreach ($projects as $project) {
-            foreach ($project->threads as $thread) {
-                $lastRead = $thread->userReads->first()?->last_read_at
-                    ?? now()->subYears(10);
-                $count += $thread->messages()
-                    ->where('created_at', '>', $lastRead)
-                    ->where('user_id', '!=', $user->id)
-                    ->count();
-            }
-        }
-
-        return response()->json(['count' => $count]);
+        return response()->json([
+            'count' => $this->projectDiscussionService->unreadTotalForUser($request->user()),
+        ]);
     }
 
-    public function destroyThread(Project $project, ProjectThread $thread)
+    public function destroyThread(Request $request, Project $project, ProjectThread $thread): RedirectResponse
     {
-        abort_unless($project->isMember(Auth::user()), 403);
-
-        $userProjectRole = $project->roleForUser(Auth::user());
-        $isPrivileged = $project->created_by === Auth::id()
-            || in_array($userProjectRole, ['owner', 'manager', 'member'])
-            || $project->workspace->isAdmin(Auth::user());
-
-        abort_unless($isPrivileged || $thread->user_id === Auth::id(), 403);
+        abort_unless($project->canManageDiscussionThreads($request->user()), 403);
 
         ActivityLog::create([
-            'user_id' => Auth::id(),
+            'user_id' => $request->user()->id,
             'action' => 'deleted',
             'entity_type' => 'discussion',
             'entity_id' => $thread->id,
-            'description' => 'Menghapus topik diskusi: '.$thread->title.' di project '.$project->name,
+            'description' => 'Menghapus Project Discussion: '.$thread->title.' di project '.$project->name,
         ]);
 
         $thread->messages()->delete();
         $thread->delete();
 
-        return redirect()->route('discussion.show', $project)
-            ->with('success', 'Topik berhasil dihapus.');
+        return $this->redirectAfterThreadAction($request, $project)
+            ->with('success', 'Discussion berhasil dihapus.');
     }
 
-    public function updateThread(Request $request, Project $project, ProjectThread $thread)
+    public function updateThread(Request $request, Project $project, ProjectThread $thread): RedirectResponse
     {
-        abort_unless($project->isMember(Auth::user()), 403);
+        abort_unless($project->canManageDiscussionThreads($request->user()), 403);
 
-        $userProjectRole = $project->roleForUser(Auth::user());
-        $isPrivileged = $project->created_by === Auth::id()
-            || in_array($userProjectRole, ['owner', 'manager', 'member'])
-            || $project->workspace->isAdmin(Auth::user());
-
-        abort_unless($isPrivileged || $thread->user_id === Auth::id(), 403);
-
-        $request->validate(['name' => 'required|string|max:255']);
-        $thread->update(['title' => $request->name]);
+        $validated = $request->validate(['name' => 'required|string|max:255']);
+        $thread->update(['title' => $validated['name']]);
 
         ActivityLog::create([
-            'user_id' => Auth::id(),
+            'user_id' => $request->user()->id,
             'action' => 'updated',
             'entity_type' => 'discussion',
             'entity_id' => $thread->id,
-            'description' => 'Mengubah topik diskusi: '.$thread->title.' di project '.$project->name,
+            'description' => 'Mengubah Project Discussion: '.$thread->title.' di project '.$project->name,
         ]);
 
-        return redirect()->route('discussion.show', $project)
-            ->with('success', 'Topik berhasil diperbarui.');
+        return $this->redirectAfterThreadAction($request, $project)
+            ->with('success', 'Discussion berhasil diperbarui.');
+    }
+
+    private function redirectAfterThreadAction(Request $request, Project $project): RedirectResponse
+    {
+        if ($request->string('return_to')->toString() === 'project') {
+            return redirect()->route('projects.show', [
+                'token' => $project->token,
+                'tab' => 'discussions',
+            ]);
+        }
+
+        return redirect()->route('discussion.show', $project);
     }
 }

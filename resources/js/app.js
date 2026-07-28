@@ -9,6 +9,7 @@ import './project-members';
 import './workspace-members';
 import './workspace-show';
 import './workspace-chat';
+import './project-discussion';
 
 import Alpine from 'alpinejs';
 

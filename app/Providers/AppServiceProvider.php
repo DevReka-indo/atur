@@ -2,10 +2,10 @@
 
 namespace App\Providers;
 
-use App\Models\Project;
 use App\Models\User;
 use App\Models\UserNotification;
 use App\Models\Workspace;
+use App\Services\ProjectDiscussionService;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -59,26 +59,9 @@ class AppServiceProvider extends ServiceProvider
                     ->count();
 
                 $user = auth()->user();
-                $sidebarUnreadDiscussion = 0;
-
                 try {
-                    $projects = Project::where(function ($q) use ($user) {
-                        $q->whereHas('members', fn ($q) => $q->where('user_id', $user->id))
-                            ->orWhere('created_by', $user->id);
-                    })
-                        ->with(['threads.userReads' => fn ($q) => $q->where('user_id', $user->id)])
-                        ->get();
-
-                    foreach ($projects as $project) {
-                        foreach ($project->threads as $thread) {
-                            $lastRead = $thread->userReads->first()?->last_read_at
-                                ?? now()->subYears(10);
-                            $sidebarUnreadDiscussion += $thread->messages()
-                                ->where('created_at', '>', $lastRead)
-                                ->where('user_id', '!=', $user->id)
-                                ->count();
-                        }
-                    }
+                    $sidebarUnreadDiscussion = app(ProjectDiscussionService::class)
+                        ->unreadTotalForUser($user);
                 } catch (\Exception $e) {
                     $sidebarUnreadDiscussion = 0;
                 }
@@ -89,7 +72,7 @@ class AppServiceProvider extends ServiceProvider
             }
 
             $view->with('unreadCount', $unreadCount);
-            $view->with('sidebarUnreadDiscussion', $sidebarUnreadDiscussion); // ← BARU
+            $view->with('sidebarUnreadDiscussion', $sidebarUnreadDiscussion);
         });
     }
 

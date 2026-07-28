@@ -5,17 +5,23 @@ namespace Tests\Feature;
 use App\Models\Project;
 use App\Models\ProjectThread;
 use App\Models\ProjectThreadMessage;
+use App\Models\ThreadUserRead;
 use App\Models\User;
 use App\Models\Workspace;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class DiscussionAuthorizationTest extends TestCase
 {
+    private User $projectAManager;
+
     private User $projectAMember;
 
     private User $projectBMember;
+
+    private User $projectAViewer;
 
     private User $outsider;
 
@@ -115,6 +121,203 @@ class DiscussionAuthorizationTest extends TestCase
         );
     }
 
+    public function test_project_admin_can_create_rename_and_delete_discussion_threads(): void
+    {
+        $this->actingAs($this->projectAManager)
+            ->post(route('discussion.threads.store', $this->projectA), [
+                'name' => 'Admin Discussion',
+            ])
+            ->assertRedirect(route('discussion.show', $this->projectA));
+
+        $thread = ProjectThread::query()->where('title', 'Admin Discussion')->firstOrFail();
+
+        $this->actingAs($this->projectAManager)
+            ->postJson(route('discussion.messages.store', [$this->projectA, $thread]), [
+                'content' => 'Project Admin message',
+            ])
+            ->assertOk()
+            ->assertJsonPath('content', 'Project Admin message');
+
+        $this->actingAs($this->projectAManager)
+            ->patch(route('discussion.threads.update', [$this->projectA, $thread]), [
+                'name' => 'Renamed Discussion',
+            ])
+            ->assertRedirect(route('discussion.show', $this->projectA));
+
+        $this->assertSame('Renamed Discussion', $thread->fresh()->title);
+
+        $this->actingAs($this->projectAManager)
+            ->delete(route('discussion.threads.destroy', [$this->projectA, $thread]))
+            ->assertRedirect(route('discussion.show', $this->projectA));
+
+        $this->assertModelMissing($thread);
+    }
+
+    public function test_member_cannot_create_or_manage_threads_even_when_they_created_the_thread(): void
+    {
+        $this->actingAs($this->projectAMember)
+            ->post(route('discussion.threads.store', $this->projectA), [
+                'name' => 'Forbidden Member Discussion',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAMember)
+            ->patch(route('discussion.threads.update', [$this->projectA, $this->threadA]), [
+                'name' => 'Member Rename Attempt',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAMember)
+            ->delete(route('discussion.threads.destroy', [$this->projectA, $this->threadA]))
+            ->assertForbidden();
+
+        $this->assertSame('Project A Thread', $this->threadA->fresh()->title);
+    }
+
+    public function test_viewer_cannot_read_post_manage_or_receive_project_discussion_unread(): void
+    {
+        $this->createMessage($this->threadA, $this->projectAMember, 'Unread for contributors only');
+
+        $this->actingAs($this->projectAViewer)
+            ->get(route('discussion.show', $this->projectA))
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAViewer)
+            ->get(route('discussion.chat', [$this->projectA, $this->threadA]))
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAViewer)
+            ->postJson(route('discussion.messages.store', [$this->projectA, $this->threadA]), [
+                'content' => 'Viewer message',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAViewer)
+            ->post(route('discussion.threads.store', $this->projectA), [
+                'name' => 'Viewer Discussion',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAViewer)
+            ->patch(route('discussion.threads.update', [$this->projectA, $this->threadA]), [
+                'name' => 'Viewer Rename',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAViewer)
+            ->delete(route('discussion.threads.destroy', [$this->projectA, $this->threadA]))
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAViewer)
+            ->getJson(route('discussion.unread', $this->projectA))
+            ->assertForbidden();
+
+        $this->actingAs($this->projectAViewer)
+            ->getJson(route('discussion.unread-sidebar'))
+            ->assertOk()
+            ->assertJsonPath('count', 0);
+
+        $this->assertFalse(
+            ThreadUserRead::query()->where('user_id', $this->projectAViewer->id)->exists(),
+        );
+    }
+
+    public function test_hub_only_lists_projects_where_user_is_admin_or_member(): void
+    {
+        $this->actingAs($this->projectAMember)
+            ->get(route('discussion.index'))
+            ->assertOk()
+            ->assertSee('Project A')
+            ->assertDontSee('Project B');
+
+        $this->actingAs($this->projectAViewer)
+            ->get(route('discussion.index'))
+            ->assertOk()
+            ->assertDontSee('Project A Thread')
+            ->assertViewHas('projects', fn ($projects): bool => $projects->isEmpty());
+    }
+
+    public function test_thread_management_button_is_only_rendered_for_project_admin(): void
+    {
+        $this->actingAs($this->projectAManager)
+            ->get(route('discussion.show', $this->projectA))
+            ->assertOk()
+            ->assertSee('New Discussion')
+            ->assertSee('data-discussion-rename', false);
+
+        $this->actingAs($this->projectAMember)
+            ->get(route('discussion.show', $this->projectA))
+            ->assertOk()
+            ->assertDontSee('New Discussion')
+            ->assertDontSee('data-discussion-rename', false);
+    }
+
+    public function test_hub_search_and_unread_filters_preserve_access_scope(): void
+    {
+        $this->createMessage($this->threadA, $this->projectBMember, 'Unread planning update');
+
+        $this->actingAs($this->projectAMember)
+            ->get(route('discussion.index', [
+                'search' => 'Project A Thread',
+                'unread' => 1,
+            ]))
+            ->assertOk()
+            ->assertSee('Project A')
+            ->assertSee('1 unread')
+            ->assertDontSee('Project B Thread');
+
+        $this->actingAs($this->projectAMember)
+            ->get(route('discussion.index', ['search' => 'Project B']))
+            ->assertOk()
+            ->assertViewHas('projects', fn ($projects): bool => $projects->isEmpty());
+    }
+
+    public function test_super_admin_can_use_the_existing_discussion_authorization_shortcut(): void
+    {
+        $superAdmin = User::factory()->create(['role' => 'super_admin']);
+
+        $this->actingAs($superAdmin)
+            ->get(route('discussion.show', $this->projectA))
+            ->assertOk()
+            ->assertSee('New Discussion');
+
+        $this->actingAs($superAdmin)
+            ->get(route('discussion.index'))
+            ->assertOk()
+            ->assertSee('Project A')
+            ->assertSee('Project B');
+    }
+
+    public function test_hub_discussion_queries_do_not_grow_with_the_number_of_threads(): void
+    {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->actingAs($this->projectAMember)
+            ->get(route('discussion.index'))
+            ->assertOk();
+        $initialQueryCount = $this->discussionQueryCount();
+        DB::disableQueryLog();
+
+        foreach (range(1, 3) as $index) {
+            $thread = ProjectThread::create([
+                'project_id' => $this->projectA->id,
+                'user_id' => $this->projectAManager->id,
+                'title' => "Additional Discussion {$index}",
+            ]);
+            $this->createMessage($thread, $this->projectAManager, "Message {$index}");
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->actingAs($this->projectAMember)
+            ->get(route('discussion.index'))
+            ->assertOk();
+        $expandedQueryCount = $this->discussionQueryCount();
+        DB::disableQueryLog();
+
+        $this->assertLessThanOrEqual($initialQueryCount, $expandedQueryCount);
+    }
+
     public function test_valid_sender_can_update_and_delete_their_own_message(): void
     {
         $message = $this->createMessage($this->threadA, $this->projectAMember, 'Original message');
@@ -174,8 +377,10 @@ class DiscussionAuthorizationTest extends TestCase
 
     private function createFixtures(): void
     {
+        $this->projectAManager = User::factory()->create();
         $this->projectAMember = User::factory()->create();
         $this->projectBMember = User::factory()->create();
+        $this->projectAViewer = User::factory()->create();
         $this->outsider = User::factory()->create();
 
         $workspaceA = Workspace::factory()->for($this->projectAMember, 'creator')->create();
@@ -192,6 +397,14 @@ class DiscussionAuthorizationTest extends TestCase
 
         $this->projectA->members()->attach($this->projectAMember->id, [
             'role' => Project::ROLE_MEMBER,
+            'joined_at' => now(),
+        ]);
+        $this->projectA->members()->attach($this->projectAManager->id, [
+            'role' => Project::ROLE_MANAGER,
+            'joined_at' => now(),
+        ]);
+        $this->projectA->members()->attach($this->projectAViewer->id, [
+            'role' => Project::ROLE_VIEWER,
             'joined_at' => now(),
         ]);
         $this->projectA->members()->attach($this->projectBMember->id, [
@@ -222,6 +435,15 @@ class DiscussionAuthorizationTest extends TestCase
             'user_id' => $sender->id,
             'content' => $content,
         ]);
+    }
+
+    private function discussionQueryCount(): int
+    {
+        return collect(DB::getQueryLog())
+            ->filter(fn (array $query): bool => str_contains($query['query'], 'project_threads')
+                || str_contains($query['query'], 'project_thread_messages')
+                || str_contains($query['query'], 'thread_user_reads'))
+            ->count();
     }
 
     private function createTestSchema(): void

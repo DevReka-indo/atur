@@ -73,33 +73,65 @@ class DiscussionRouteTest extends TestCase
     public function test_chat_frontend_posts_messages_to_the_canonical_named_route(): void
     {
         $chatView = file_get_contents(resource_path('views/discussion/chat.blade.php'));
+        $discussionScript = file_get_contents(resource_path('js/project-discussion.js'));
 
         $this->assertIsString($chatView);
+        $this->assertIsString($discussionScript);
         $this->assertMatchesRegularExpression(
             '/route\s*\(\s*[\'"]discussion\.messages\.store[\'"]/',
             $chatView,
         );
-        $this->assertStringContainsString('fetch(MESSAGE_STORE_URL', $chatView);
-        $this->assertStringNotContainsString('fetch(`/discussion/${PROJECT_ID}/thread/${THREAD_ID}/messages`,', $chatView);
+        $this->assertStringContainsString('root.dataset.messageStoreUrl', $discussionScript);
+        $this->assertStringNotContainsString('/discussion/${PROJECT_ID}/thread/${THREAD_ID}/messages', $discussionScript);
     }
 
     public function test_thread_preview_uses_safe_dom_text_rendering(): void
     {
-        $discussionView = file_get_contents(resource_path('views/discussion/show.blade.php'));
+        $discussionScript = file_get_contents(resource_path('js/project-discussion.js'));
 
-        $this->assertIsString($discussionView);
-        $this->assertStringContainsString('sender.textContent =', $discussionView);
-        $this->assertStringContainsString('document.createTextNode(', $discussionView);
-        $this->assertDoesNotMatchRegularExpression('/preview\.innerHTML\s*=/', $discussionView);
+        $this->assertIsString($discussionScript);
+        $this->assertStringContainsString('preview.textContent =', $discussionScript);
+        $this->assertStringContainsString('text.textContent = message.content', $discussionScript);
+        $this->assertDoesNotMatchRegularExpression('/preview\.innerHTML\s*=/', $discussionScript);
     }
 
     public function test_thread_preview_uses_the_eager_loaded_last_message(): void
     {
-        $discussionView = file_get_contents(resource_path('views/discussion/show.blade.php'));
+        $threadView = file_get_contents(resource_path('views/discussion/partials/project/_thread-item.blade.php'));
 
-        $this->assertIsString($discussionView);
-        $this->assertStringContainsString('$thread->messages->first()', $discussionView);
-        $this->assertStringNotContainsString('$thread->messages()->latest()->first()', $discussionView);
+        $this->assertIsString($threadView);
+        $this->assertStringContainsString('$thread->messages->first()', $threadView);
+        $this->assertStringNotContainsString('$thread->messages()->latest()->first()', $threadView);
+    }
+
+    public function test_discussion_views_use_the_expected_partial_structure(): void
+    {
+        $projectPartial = 'discussion.partials.project._index';
+        $discussionShow = file_get_contents(resource_path('views/discussion/show.blade.php'));
+        $projectShow = file_get_contents(resource_path('views/projects/show.blade.php'));
+
+        $this->assertStringContainsString($projectPartial, $discussionShow);
+        $this->assertStringContainsString($projectPartial, $projectShow);
+
+        foreach ([
+            'index/_header',
+            'index/_filters',
+            'index/_project-list',
+            'index/_project-card',
+            'project/_index',
+            'project/_header',
+            'project/_thread-list',
+            'project/_thread-item',
+            'project/_empty-state',
+            'project/_create-thread-modal',
+            'chat/_header',
+            'chat/_message-list',
+            'chat/_message-item',
+            'chat/_composer',
+            'chat/_edit-message-modal',
+        ] as $partial) {
+            $this->assertFileExists(resource_path("views/discussion/partials/{$partial}.blade.php"));
+        }
     }
 
     public function test_discussion_index_and_show_routes_remain_available(): void

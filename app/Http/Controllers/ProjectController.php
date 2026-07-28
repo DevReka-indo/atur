@@ -10,6 +10,7 @@ use App\Models\ProjectTemplate;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Services\ProjectDiscussionService;
 use App\Services\ProjectProgressService;
 use App\Services\ProjectTemplateApplicationService;
 use App\Services\ProjectTemplates\ProjectTemplatePreviewService;
@@ -31,6 +32,7 @@ class ProjectController extends Controller
         private TaskHierarchyService $taskHierarchyService,
         private TaskGanttService $taskGanttService,
         private ProjectTemplateApplicationService $projectTemplateApplicationService,
+        private ProjectDiscussionService $projectDiscussionService,
     ) {}
 
     // Resolve project by token (helper internal)
@@ -287,8 +289,13 @@ class ProjectController extends Controller
             $currentView = 'list';
         }
 
-        if (! in_array($currentTab, ['tasks', 'members', 'chart'], true)) {
+        if (! in_array($currentTab, ['tasks', 'members', 'chart', 'discussions'], true)) {
             $currentTab = 'tasks';
+        }
+
+        $canViewDiscussions = $project->canViewDiscussions($user);
+        if ($currentTab === 'discussions') {
+            abort_unless($canViewDiscussions, 403);
         }
 
         $this->loadProjectShowRelations($project);
@@ -297,6 +304,9 @@ class ProjectController extends Controller
         $canManageMembers = $isManager;
         $canContribute = $project->canContribute($user);
         $canChangeProjectStatus = $user->isSuperAdmin() || $canContribute;
+        $discussionThreads = $currentTab === 'discussions'
+            ? $this->projectDiscussionService->threadsForProject($project, $user)
+            : collect();
 
         $progress = round($project->calculateProgress(), 1);
 
@@ -354,6 +364,10 @@ class ProjectController extends Controller
             'canManageMembers' => $canManageMembers,
             'canContribute' => $canContribute,
             'canChangeProjectStatus' => $canChangeProjectStatus,
+            'canViewDiscussions' => $canViewDiscussions,
+            'canManageDiscussionThreads' => $project->canManageDiscussionThreads($user),
+            'discussionThreads' => $discussionThreads,
+            'discussionContext' => 'project',
 
             'progress' => $progress,
 

@@ -19,6 +19,12 @@
             @include('projects.partials.show.members._index')
 
             @include('projects.partials.show._chart-tab')
+
+            @if ($currentTab === 'discussions')
+                @include('discussion.partials.project._index', [
+                    'threads' => $discussionThreads,
+                ])
+            @endif
         </div>
     </div>
 

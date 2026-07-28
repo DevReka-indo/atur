@@ -4,10 +4,13 @@ namespace Tests\Feature;
 
 use App\Models\Notification;
 use App\Models\Project;
+use App\Models\ProjectThread;
 use App\Models\User;
 use App\Models\Workspace;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Tests\Support\CreatesProjectTemplateTestSchema;
 use Tests\TestCase;
 
@@ -20,6 +23,29 @@ class ProjectMemberUxTest extends TestCase
         parent::setUp();
 
         $this->createProjectTemplateTestSchema();
+        Schema::create('project_threads', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('project_id');
+            $table->foreignId('user_id');
+            $table->string('title');
+            $table->text('body')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('project_thread_messages', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('project_thread_id');
+            $table->foreignId('user_id');
+            $table->text('content');
+            $table->timestamps();
+        });
+        Schema::create('thread_user_reads', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('thread_id');
+            $table->foreignId('user_id');
+            $table->timestamp('last_read_at')->nullable();
+            $table->timestamps();
+            $table->unique(['thread_id', 'user_id']);
+        });
         DB::connection()->getPdo()->sqliteCreateFunction(
             'FIELD',
             static function (mixed $value, mixed ...$values): int {
@@ -94,6 +120,53 @@ class ProjectMemberUxTest extends TestCase
             ->assertDontSee('data-open-member-invite', false)
             ->assertDontSee('data-member-invite-modal', false)
             ->assertDontSee('data-member-menu-trigger', false);
+    }
+
+    public function test_discussions_tab_is_available_to_project_admin_and_member(): void
+    {
+        $fixture = $this->memberFixture();
+        $thread = ProjectThread::create([
+            'project_id' => $fixture['project']->id,
+            'user_id' => $fixture['manager']->id,
+            'title' => 'Shared planning discussion',
+        ]);
+
+        foreach ([$fixture['manager'], $fixture['existingMember']] as $user) {
+            $this->actingAs($user)
+                ->get(route('projects.show', [
+                    'token' => $fixture['project']->token,
+                    'tab' => 'discussions',
+                ]))
+                ->assertOk()
+                ->assertSee('Project Discussions')
+                ->assertSee($thread->title)
+                ->assertSee('data-project-tab="discussions"', false)
+                ->assertSee('aria-current="page"', false);
+        }
+    }
+
+    public function test_viewer_cannot_see_or_open_project_discussions_tab(): void
+    {
+        $fixture = $this->memberFixture();
+        ProjectThread::create([
+            'project_id' => $fixture['project']->id,
+            'user_id' => $fixture['manager']->id,
+            'title' => 'Manager-only discussion data',
+        ]);
+
+        $this->actingAs($fixture['viewer'])
+            ->get(route('projects.show', $fixture['project']->token))
+            ->assertOk()
+            ->assertDontSee('data-project-tab="discussions"', false)
+            ->assertDontSee('Manager-only discussion data');
+
+        $this->actingAs($fixture['viewer'])
+            ->get(route('projects.show', [
+                'token' => $fixture['project']->token,
+                'tab' => 'discussions',
+            ]))
+            ->assertForbidden()
+            ->assertDontSee('Manager-only discussion data');
     }
 
     public function test_manager_can_add_workspace_members_with_every_valid_project_role(): void
