@@ -224,13 +224,19 @@ class DiscussionRouteTest extends TestCase
 
     public function test_notification_view_supports_project_discussion_mentions(): void
     {
-        $view = file_get_contents(resource_path('views/notifications/index.blade.php'));
+        $presentationService = file_get_contents(app_path(
+            'Services/NotificationPresentationService.php',
+        ));
+        $notificationCard = file_get_contents(resource_path(
+            'views/notifications/partials/_card.blade.php',
+        ));
 
-        $this->assertIsString($view);
-        $this->assertStringContainsString('TYPE_PROJECT_DISCUSSION_MENTION', $view);
-        $this->assertStringContainsString('fa-comments', $view);
-        $this->assertStringContainsString("data_get(\$notif->metadata, 'project_name')", $view);
-        $this->assertStringContainsString("route('notifications.open'", $view);
+        $this->assertIsString($presentationService);
+        $this->assertIsString($notificationCard);
+        $this->assertStringContainsString('TYPE_PROJECT_DISCUSSION_MENTION', $presentationService);
+        $this->assertStringContainsString('fa-comments', $presentationService);
+        $this->assertStringContainsString("data_get(\$notification->metadata, 'project_name')", $presentationService);
+        $this->assertStringContainsString("route('notifications.open'", $notificationCard);
     }
 
     public function test_discussion_index_and_show_routes_remain_available(): void

@@ -148,6 +148,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/notifications/{id}/open', [DashboardController::class, 'openNotification'])
         ->name('notifications.open');
 
+    Route::delete('/notifications', [DashboardController::class, 'destroySelected'])
+        ->name('notifications.destroySelected');
+
     Route::delete('/notifications/{id}', [DashboardController::class, 'destroy'])
         ->name('notifications.destroy');
 

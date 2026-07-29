@@ -2,10 +2,10 @@
 
 namespace App\Providers;
 
+use App\Models\Notification;
 use App\Models\Project;
 use App\Models\ProjectThread;
 use App\Models\User;
-use App\Models\UserNotification;
 use App\Models\Workspace;
 use App\Services\ProjectDiscussionService;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -61,11 +61,11 @@ class AppServiceProvider extends ServiceProvider
                 : null;
         });
 
-        View::composer('*', function ($view) {
+        View::composer('layouts.app', function ($view) {
 
             if (auth()->check()) {
 
-                $unreadCount = UserNotification::where('user_id', auth()->id())
+                $unreadCount = Notification::where('user_id', auth()->id())
                     ->whereNull('read_at')
                     ->count();
 

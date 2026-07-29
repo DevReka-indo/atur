@@ -291,7 +291,7 @@ class ProjectMemberUxTest extends TestCase
         $expandedMembershipQueries = $this->membershipQueryCount();
         DB::disableQueryLog();
 
-        $this->assertLessThanOrEqual($expandedMembershipQueries, $initialMembershipQueries);
+        $this->assertLessThanOrEqual($initialMembershipQueries, $expandedMembershipQueries);
     }
 
     public function test_members_tab_uses_the_new_partial_structure_without_the_inline_form(): void

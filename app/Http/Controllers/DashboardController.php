@@ -9,6 +9,7 @@ use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Services\NotificationPresentationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
@@ -297,34 +298,31 @@ class DashboardController extends Controller
     }
 
     // notifikasi
-    public function notifications()
-    {
-        $userId = Auth::id();
+    public function notifications(
+        Request $request,
+        NotificationPresentationService $notificationPresentation,
+    ) {
+        $userId = (int) Auth::id();
+        $filter = $notificationPresentation->normalizeFilter($request->query('filter'));
 
-        $notifications = Notification::where('user_id', $userId)
-            ->with(['task', 'project', 'workspace'])
+        $notificationQuery = Notification::query()
+            ->where('user_id', $userId)
+            ->with([
+                'task:id,project_id,token,name',
+                'task.project:id,name,token',
+                'project:id,name,token',
+                'workspace:id,name,token',
+            ])
             ->orderByRaw('read_at IS NOT NULL ASC')
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->filter(function ($notif) {
-                if ($notif->task_id && ! $notif->task) {
-                    $notif->delete();
-
-                    return false;
-                }
-                if ($notif->project_id && ! $notif->project) {
-                    $notif->delete();
-
-                    return false;
-                }
-                if ($notif->workspace_id && ! $notif->workspace) {
-                    $notif->delete();
-
-                    return false;
-                }
-
-                return true;
-            });
+            ->latest();
+        $notifications = $notificationPresentation
+            ->applyFilter($notificationQuery, $filter)
+            ->paginate(12)
+            ->withQueryString()
+            ->through(fn (Notification $notification): array => [
+                'notification' => $notification,
+                'presentation' => $notificationPresentation->forNotification($notification),
+            ]);
 
         $deadlineTasks = Task::where(function ($q) use ($userId) {
             $q->assignedToUser($userId)
@@ -335,45 +333,39 @@ class DashboardController extends Controller
             ->whereDate('due_date', '<=', now()->addDays(3))
             ->where('status', '!=', 'completed')
             ->orderBy('due_date')
+            ->limit(8)
             ->get();
-
-        $urgentTasks = Task::where('priority', 'urgent')
-            ->whereNotIn('status', ['completed', 'stopped', 'cancelled'])
-            ->where(function ($query) use ($userId) {
-                $query->assignedToUser($userId)
-                    ->orWhere('created_by', $userId);
-            })
-            ->with('project')
-            ->orderBy('due_date')
-            ->limit(5)
-            ->get();
-
-        $urgentProjects = Project::where('status', 'urgent')
-            ->whereHas('members', function ($q) use ($userId) {
-                $q->where('user_id', $userId);
-            })
-            ->with('workspace')
-            ->get();
-
-        $unreadCount = Notification::where('user_id', $userId)
-            ->whereNull('read_at')
-            ->count();
+        $deadlineItems = $deadlineTasks->map(
+            fn (Task $task): array => [
+                'task' => $task,
+                'presentation' => $notificationPresentation->forDeadline($task),
+            ],
+        );
+        $filterCounts = $notificationPresentation->filterCounts($userId);
+        $unreadCount = $filterCounts[NotificationPresentationService::FILTER_UNREAD];
+        $filterLabels = NotificationPresentationService::FILTER_LABELS;
 
         return view('notifications.index', compact(
             'notifications',
-            'deadlineTasks',
+            'deadlineItems',
+            'filter',
+            'filterCounts',
+            'filterLabels',
             'unreadCount',
-            'urgentTasks',
-            'urgentProjects',
         ));
     }
 
     // Tandai 1 notifikasi dibaca
     public function markAsRead($id)
     {
-        Notification::where('id', $id)
+        $notification = Notification::query()
+            ->whereKey($id)
             ->where('user_id', Auth::id())
-            ->update(['read_at' => now()]);
+            ->firstOrFail();
+
+        if ($notification->read_at === null) {
+            $notification->update(['read_at' => now()]);
+        }
 
         return back()->with('success', 'Notifikasi ditandai dibaca.');
     }
@@ -440,6 +432,24 @@ class DashboardController extends Controller
         $notif->delete();
 
         return back()->with('success', 'Notifikasi dihapus.');
+    }
+
+    public function destroySelected(Request $request)
+    {
+        $validated = $request->validate([
+            'notification_ids' => ['required', 'array', 'min:1', 'max:100'],
+            'notification_ids.*' => ['required', 'integer', 'distinct'],
+        ]);
+
+        $deletedCount = Notification::query()
+            ->where('user_id', Auth::id())
+            ->whereIn('id', $validated['notification_ids'])
+            ->delete();
+
+        return back()->with(
+            'success',
+            "{$deletedCount} notifikasi dipilih berhasil dihapus.",
+        );
     }
 
     public function openNotification($id)

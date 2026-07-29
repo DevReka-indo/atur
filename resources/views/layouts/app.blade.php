@@ -146,16 +146,15 @@
                             </div>
                         </div>
 
-                        @php
-                            $unreadCount = \App\Models\Notification::where('user_id', auth()->id())
-                                ->whereNull('read_at')
-                                ->count();
-                        @endphp
-
-                        <a href="{{ route('notifications.index') }}" style="position:relative;">
-                            <i class="fas fa-bell"></i>
+                        <a
+                            href="{{ route('notifications.index') }}"
+                            class="relative flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            aria-label="Notifications, {{ $unreadCount }} unread"
+                            id="notification-topbar-link"
+                        >
+                            <i class="fas fa-bell" aria-hidden="true"></i>
                             <span id="notif-badge"
-                                style="position:absolute; top:-5px; right:-8px; background:red; color:white; border-radius:50%; padding:2px 6px; font-size:11px; {{ $unreadCount > 0 ? '' : 'display:none;' }}">
+                                class="absolute -right-1 -top-1 min-w-5 rounded-full bg-blue-600 px-1.5 py-0.5 text-center text-[10px] font-bold leading-4 text-white {{ $unreadCount > 0 ? '' : 'hidden' }}">
                                 {{ $unreadCount > 0 ? $unreadCount : '' }}
                             </span>
                         </a>
@@ -721,10 +720,13 @@
                     if (!badge) return;
                     if (data.unread_count > 0) {
                         badge.textContent = data.unread_count;
-                        badge.style.display = '';
+                        badge.classList.remove('hidden');
                     } else {
-                        badge.style.display = 'none';
+                        badge.textContent = '';
+                        badge.classList.add('hidden');
                     }
+                    document.getElementById('notification-topbar-link')
+                        ?.setAttribute('aria-label', `Notifications, ${data.unread_count} unread`);
                 })
                 .catch(() => {});
         }
@@ -746,6 +748,53 @@
     </div>
 
     <script>
+        function createNotificationToast(notification, options) {
+            const toast = document.createElement('div');
+            toast.style.cssText = options.toastStyles;
+
+            const iconWrapper = document.createElement('div');
+            iconWrapper.style.cssText =
+                `width:32px;height:32px;border-radius:50%;background:${options.iconBackground};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;`;
+
+            const icon = document.createElement('i');
+            icon.className = `fa-solid ${options.iconClass}`;
+            icon.style.cssText = `color:${options.iconColor};font-size:12px;`;
+            iconWrapper.appendChild(icon);
+
+            const content = document.createElement('div');
+            content.style.cssText = 'flex:1;min-width:0;';
+
+            const title = document.createElement('p');
+            title.style.cssText = 'font-size:12px;font-weight:700;color:#1f2937;margin:0;';
+            title.textContent = notification.title ?? '';
+
+            const message = document.createElement('p');
+            message.style.cssText = 'font-size:12px;color:#6b7280;margin:4px 0 0;';
+            message.textContent = notification.message ?? '';
+
+            const time = document.createElement('p');
+            time.style.cssText = 'font-size:10px;color:#9ca3af;margin:4px 0 0;';
+            time.textContent = notification.time ?? '';
+
+            content.append(title, message, time);
+
+            const closeButton = document.createElement('button');
+            closeButton.type = 'button';
+            closeButton.setAttribute('aria-label', 'Dismiss notification');
+            closeButton.style.cssText =
+                'color:#d1d5db;background:none;border:none;cursor:pointer;flex-shrink:0;margin-top:2px;font-size:14px;';
+
+            const closeIcon = document.createElement('i');
+            closeIcon.className = 'fa-solid fa-xmark';
+            closeIcon.setAttribute('aria-hidden', 'true');
+            closeButton.appendChild(closeIcon);
+            closeButton.addEventListener('click', () => toast.remove());
+
+            toast.append(iconWrapper, content, closeButton);
+
+            return toast;
+        }
+
         function showOverloadToasts(notifications) {
             const container = document.getElementById('overload-toast-container');
             if (!container) return;
@@ -753,20 +802,12 @@
             notifications.forEach((notif, i) => {
                 if (notif.type !== 'member_overload') return;
 
-                const toast = document.createElement('div');
-                toast.style.cssText =
-                    'display:flex; align-items:flex-start; gap:12px; background:white; border:1px solid #fed7aa; box-shadow:0 10px 25px rgba(0,0,0,0.1); border-radius:12px; padding:12px 16px; transition:all 0.5s ease; opacity:0; transform:translateY(-10px); pointer-events:auto;';
-                toast.innerHTML = `
-                <div style="width:32px;height:32px;border-radius:50%;background:#ffedd5;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">
-                    <i class="fa-solid fa-user-clock" style="color:#f97316;font-size:12px;"></i>
-                </div>
-                <div style="flex:1;min-width:0;">
-                    <p style="font-size:12px;font-weight:700;color:#1f2937;margin:0;">${notif.title}</p>
-                    <p style="font-size:12px;color:#6b7280;margin:4px 0 0;">${notif.message}</p>
-                    <p style="font-size:10px;color:#9ca3af;margin:4px 0 0;">${notif.time}</p>
-                </div>
-                <button onclick="this.closest('div[style]').remove()" style="color:#d1d5db;background:none;border:none;cursor:pointer;flex-shrink:0;margin-top:2px;font-size:14px;">✕</button>
-            `;
+                const toast = createNotificationToast(notif, {
+                    toastStyles: 'display:flex;align-items:flex-start;gap:12px;background:white;border:1px solid #fed7aa;box-shadow:0 10px 25px rgba(0,0,0,0.1);border-radius:12px;padding:12px 16px;transition:all 0.5s ease;opacity:0;transform:translateY(-10px);pointer-events:auto;',
+                    iconBackground: '#ffedd5',
+                    iconClass: 'fa-user-clock',
+                    iconColor: '#f97316',
+                });
 
                 container.appendChild(toast);
 
@@ -827,20 +868,12 @@
             notifications.forEach((notif, i) => {
                 if (notif.type !== 'deadline_warning') return;
 
-                const toast = document.createElement('div');
-                toast.style.cssText =
-                    'display:flex;align-items:flex-start;gap:12px;background:white;border:1px solid #fca5a5;box-shadow:0 10px 25px rgba(0,0,0,0.1);border-radius:12px;padding:12px 16px;transition:all 0.5s ease;opacity:0;transform:translateY(10px);pointer-events:auto;margin-bottom:4px;';
-                toast.innerHTML = `
-                <div style="width:32px;height:32px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">
-                    <i class="fa-solid fa-clock" style="color:#ef4444;font-size:12px;"></i>
-                </div>
-                <div style="flex:1;min-width:0;">
-                    <p style="font-size:12px;font-weight:700;color:#1f2937;margin:0;">${notif.title}</p>
-                    <p style="font-size:12px;color:#6b7280;margin:4px 0 0;">${notif.message}</p>
-                    <p style="font-size:10px;color:#9ca3af;margin:4px 0 0;">${notif.time}</p>
-                </div>
-                <button onclick="this.parentElement.remove()" style="color:#d1d5db;background:none;border:none;cursor:pointer;flex-shrink:0;font-size:14px;">✕</button>
-            `;
+                const toast = createNotificationToast(notif, {
+                    toastStyles: 'display:flex;align-items:flex-start;gap:12px;background:white;border:1px solid #fca5a5;box-shadow:0 10px 25px rgba(0,0,0,0.1);border-radius:12px;padding:12px 16px;transition:all 0.5s ease;opacity:0;transform:translateY(10px);pointer-events:auto;margin-bottom:4px;',
+                    iconBackground: '#fee2e2',
+                    iconClass: 'fa-clock',
+                    iconColor: '#ef4444',
+                });
 
                 container.appendChild(toast);
 

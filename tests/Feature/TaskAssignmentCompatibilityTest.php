@@ -152,7 +152,7 @@ class TaskAssignmentCompatibilityTest extends TestCase
         $response->assertOk();
         $response->assertSee('Legacy Editor');
         $this->assertMatchesRegularExpression(
-            '/name="assignee_ids\[\]" value="'.$legacyAssignee->id.'"[\s\S]*?checked/',
+            '/name="assignee_ids\[\]"\s+value="'.$legacyAssignee->id.'"[\s\S]*?checked/',
             $response->getContent(),
         );
         $this->assertSame(0, $legacyTask->assignees()->count());
