@@ -15,9 +15,7 @@
         'projectStats' => $projectStats,
     ])
 
-    @include('dashboard.partials._overload-alert', [
-        'overloadedMembers' => $overloadedMembers,
-    ])
+    @include('dashboard.partials._workload-link')
 
     <div id="dashboard-grid" class="px-4 sm:px-6 grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         @include('dashboard.partials._project-status-chart', [
@@ -41,7 +39,6 @@
 
     @include('dashboard.partials._scripts', [
         'projectStats' => $projectStats,
-        'overloadedMembers' => $overloadedMembers,
     ])
 
     @include('dashboard.partials._styles')

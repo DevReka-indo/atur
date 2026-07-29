@@ -381,9 +381,6 @@ class ProjectController extends Controller
             'baseline' => $chart['baseline'],
             'chartData' => $chart['chartData'],
 
-            'overloadedMemberIds' => $memberData['overloadedMemberIds'],
-            'memberTaskCounts' => $memberData['memberTaskCounts'],
-
             'managers' => $memberData['managers'],
             'members' => $memberData['members'],
             'viewers' => $memberData['viewers'],
@@ -512,39 +509,6 @@ class ProjectController extends Controller
     {
         $currentUserId = Auth::id();
 
-        $memberTaskCounts = $project->members->mapWithKeys(
-            fn (User $member): array => [
-                $member->id => 0,
-            ],
-        );
-
-        foreach ($project->tasks as $task) {
-            if (in_array($task->status, ['completed', 'cancelled'], true)) {
-                continue;
-            }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Assignment compatibility
-        |--------------------------------------------------------------------------
-        |
-        | Pivot menjadi sumber utama.
-        | Legacy assignee_id hanya dipakai jika pivot kosong.
-        |
-        */
-            $assignedUserIds = $task->assignees->isNotEmpty() ? $task->assignees->pluck('id') : collect([$task->assignee_id])->filter();
-
-            foreach ($assignedUserIds->unique() as $assignedUserId) {
-                if (! $memberTaskCounts->has($assignedUserId)) {
-                    continue;
-                }
-
-                $memberTaskCounts->put($assignedUserId, ((int) $memberTaskCounts->get($assignedUserId)) + 1);
-            }
-        }
-
-        $overloadedMemberIds = $memberTaskCounts->filter(fn (int $count): bool => $count >= 5)->keys()->map(fn ($id): int => (int) $id)->all();
-
         $managers = $project->members->filter(fn (User $member): bool => $member->pivot->role === 'manager')->sortByDesc(fn (User $member): bool => $member->id === $currentUserId)->values();
 
         $members = $project->members->filter(fn (User $member): bool => $member->pivot->role === 'member')->sortByDesc(fn (User $member): bool => $member->id === $currentUserId)->values();
@@ -552,9 +516,6 @@ class ProjectController extends Controller
         $viewers = $project->members->filter(fn (User $member): bool => $member->pivot->role === 'viewer')->sortByDesc(fn (User $member): bool => $member->id === $currentUserId)->values();
 
         return [
-            'memberTaskCounts' => $memberTaskCounts,
-            'overloadedMemberIds' => $overloadedMemberIds,
-
             'managers' => $managers,
             'members' => $members,
             'viewers' => $viewers,

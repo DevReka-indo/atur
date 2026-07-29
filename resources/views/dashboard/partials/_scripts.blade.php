@@ -314,26 +314,6 @@
             }
         }
 
-        const overloadCount = {{ $overloadedMembers->count() }};
-        const overloadDismissedData = localStorage.getItem('overload-alert-dismissed');
-
-        if (overloadDismissedData) {
-            try {
-                const parsed = JSON.parse(overloadDismissedData);
-
-                if (parsed.count === overloadCount) {
-                    const alertElement = document.getElementById('overload-alert');
-
-                    if (alertElement) {
-                        alertElement.style.display = 'none';
-                    }
-                } else {
-                    localStorage.removeItem('overload-alert-dismissed');
-                }
-            } catch (error) {
-                localStorage.removeItem('overload-alert-dismissed');
-            }
-        }
     }
 
     function closeUrgentAlert() {
@@ -345,22 +325,6 @@
         }
 
         localStorage.setItem('urgent-alert-dismissed', JSON.stringify({
-            count: currentCount,
-            dismissedAt: new Date().toISOString()
-        }));
-
-        closeAlertElement(alert);
-    }
-
-    function closeOverloadAlert() {
-        const alert = document.getElementById('overload-alert');
-        const currentCount = {{ $overloadedMembers->count() }};
-
-        if (!alert) {
-            return;
-        }
-
-        localStorage.setItem('overload-alert-dismissed', JSON.stringify({
             count: currentCount,
             dismissedAt: new Date().toISOString()
         }));

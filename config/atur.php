@@ -12,4 +12,16 @@ return [
     'license' => 'Internal Use',
     'privacy_version' => '1.0',
     'privacy_effective_date' => '1 Januari 2026',
+    'workload' => [
+        'default_period' => 'next_7_days',
+        'active_task_statuses' => ['to_do', 'in_progress', 'review'],
+        'active_project_statuses' => ['active', 'urgent'],
+        'thresholds' => [
+            'attention' => 5,
+            'high_risk' => 7,
+            'critical' => 9,
+        ],
+        'custom_range_max_days' => 366,
+        'per_page' => 15,
+    ],
 ];

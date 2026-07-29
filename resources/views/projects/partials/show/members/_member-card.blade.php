@@ -2,8 +2,6 @@
     $isCurrentUser = (int) $member->id === (int) $currentUserId;
     $isWorkspaceOwner = (int) $member->id === (int) $workspaceOwnerId;
     $isProjectCreator = (int) $member->id === (int) $project->created_by;
-    $isOverloaded = in_array((int) $member->id, array_map('intval', $overloadedMemberIds), true);
-    $taskCount = (int) ($memberTaskCounts[$member->id] ?? 0);
     $canManageMemberActions = $canManageMembers
         && ! $isCurrentUser
         && ! $isWorkspaceOwner
@@ -54,12 +52,6 @@
                 <p class="truncate text-xs text-gray-400">{{ $member->job_title }}</p>
             @endif
 
-            @if ($isOverloaded)
-                <span class="mt-1 inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
-                    <i class="fa-solid fa-triangle-exclamation text-[10px]"></i>
-                    Overload ({{ $taskCount }} tasks)
-                </span>
-            @endif
         </div>
 
         @if ($canManageMemberActions)

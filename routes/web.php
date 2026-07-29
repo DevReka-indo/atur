@@ -18,6 +18,7 @@ use App\Http\Controllers\ProjectTemplateTaskController;
 use App\Http\Controllers\RolePermissionController;
 use App\Http\Controllers\TaskController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\WorkloadController;
 use App\Http\Controllers\WorkspaceChatController;
 use App\Http\Controllers\WorkspaceController;
 use App\Http\Controllers\WorkspaceInvitationController;
@@ -109,8 +110,11 @@ Route::middleware('auth')->group(function () {
     Route::get('/activity-log', [DashboardController::class, 'activityLog'])
         ->name('activity.log');
 
-    Route::get('/overload', [DashboardController::class, 'overloadList'])
+    Route::get('/overload', [WorkloadController::class, 'index'])
         ->name('overload.index');
+    Route::get('/overload/members/{user}', [WorkloadController::class, 'detail'])
+        ->middleware('throttle:workload-detail')
+        ->name('overload.members.show');
 
     /*
     |--------------------------------------------------------------------------

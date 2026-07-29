@@ -8,6 +8,7 @@ use App\Models\ProjectThread;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Services\ProjectDiscussionService;
+use App\Services\WorkloadService;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -54,12 +55,29 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('project-discussion-mentions', function (Request $request): Limit {
             return Limit::perMinute(60)->by($this->projectDiscussionRateLimitKey($request));
         });
+        RateLimiter::for('workload-detail', function (Request $request): Limit {
+            return Limit::perMinute(60)->by($request->user()?->id);
+        });
 
         Gate::before(function (User $user): ?bool {
             return $user->hasRole('super_admin')
                 ? true
                 : null;
         });
+        Gate::define(
+            'view-workload-monitoring',
+            fn (User $user): bool => app(WorkloadService::class)->canView($user),
+        );
+        View::composer(
+            ['layouts.sidebar', 'dashboard.partials._workload-link'],
+            function ($view): void {
+                $view->with(
+                    'canViewWorkload',
+                    auth()->check()
+                        && app(WorkloadService::class)->canView(auth()->user()),
+                );
+            },
+        );
 
         View::composer('layouts.app', function ($view) {
 

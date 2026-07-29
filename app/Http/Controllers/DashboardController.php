@@ -22,7 +22,6 @@ class DashboardController extends Controller
         // CATAT DEVICE SETELAH LOGIN
         $this->afterLogin();
         $this->sendDeadlineNotificationsPublic($user);
-        $this->sendOverloadNotificationsOnLogin($user);
 
         $allProjects = $user->projects()->with('tasks.statusWeight')->get();
         $stats = [
@@ -93,37 +92,7 @@ class DashboardController extends Controller
             ->orderBy('due_date')
             ->get();
 
-        $isSuperAdmin = $user->isSuperAdmin();
-
-        $overloadedMembers = collect();
-        $projects = $isSuperAdmin
-            ? \App\Models\Project::with('members')->get()
-            : $user->projects()->with('members')->get();
-
-        foreach ($projects as $project) {
-            if (! $isSuperAdmin && ! $project->members->contains('id', $user->id)) {
-                continue;
-            }
-
-            foreach ($project->members as $member) {
-                $count = Task::where('project_id', $project->id)
-                    ->assignedToUser($member->id)
-                    ->whereNotIn('status', ['completed', 'cancelled'])
-                    ->count();
-
-                if ($count >= 5) {
-                    $overloadedMembers->push([
-                        'name' => $member->name,
-                        'project' => $project->name,
-                        'task_count' => $count,
-                        'project_token' => $project->token,
-                        'project_id' => $project->id,
-                    ]);
-                }
-            }
-        }
-
-        return view('dashboard.index', compact('stats', 'recentTasks', 'activeProjects', 'projectStats', 'deadlineTasks', 'overloadedMembers'));
+        return view('dashboard.index', compact('stats', 'recentTasks', 'activeProjects', 'projectStats', 'deadlineTasks'));
     }
 
     public function activityLog(Request $request)
@@ -486,138 +455,6 @@ class DashboardController extends Controller
         return view('about.index');
     }
 
-    // overload
-    public function overloadList()
-    {
-        $user = Auth::user();
-        $isSuperAdmin = $user->isSuperAdmin();
-
-        $overloadedMembers = collect();
-
-        $projects = $isSuperAdmin
-            ? \App\Models\Project::with('members')->get()
-            : $user->projects()->with('members')->get();
-
-        foreach ($projects as $project) {
-            if (! $isSuperAdmin && ! $project->members->contains('id', $user->id)) {
-                continue;
-            }
-
-            foreach ($project->members as $member) {
-                $tasks = Task::where('project_id', $project->id)
-                    ->assignedToUser($member->id)
-                    ->whereNotIn('status', ['completed', 'cancelled'])
-                    ->get()
-                    ->map(fn ($t) => [
-                        'title' => $t->name,
-                        'status' => $t->status,
-                        'due_date' => $t->due_date ? \Carbon\Carbon::parse($t->due_date)->format('d M Y') : null,
-                        'token' => $t->token,
-                        'days_until_due' => $t->due_date ? (int) now()->startOfDay()->diffInDays(\Carbon\Carbon::parse($t->due_date)->startOfDay(), false) : null,
-                    ])->toArray();
-
-                $count = count($tasks);
-
-                if ($count >= 5) {
-                    $overloadedMembers->push([
-                        'name' => $member->name,
-                        'initial' => strtoupper(substr($member->name, 0, 1)),
-                        'project' => $project->name,
-                        'task_count' => $count,
-                        'project_token' => $project->token,
-                        'tasks' => $tasks,
-                    ]);
-                }
-            }
-        }
-
-        if ($overloadedMembers->isNotEmpty()) {
-            $this->sendOverloadNotifications($overloadedMembers, $user);
-        }
-
-        return view('overload.index', compact('overloadedMembers', 'isSuperAdmin'));
-    }
-
-    private function sendOverloadNotifications($overloadedMembers, $currentUser)
-    {
-        $isSuperAdmin = $currentUser->isSuperAdmin();
-
-        if ($isSuperAdmin) {
-            if (cache()->has("overload_sent_{$currentUser->id}")) {
-                return;
-            }
-
-            $overloadCount = $overloadedMembers->count();
-
-            Notification::where('user_id', $currentUser->id)
-                ->where('type', 'member_overload')
-                ->delete();
-
-            Notification::create([
-                'user_id' => $currentUser->id,
-                'type' => 'member_overload',
-                'title' => 'Member Overload Detected',
-                'message' => $overloadCount.' member(s) are overloaded across all projects! Please redistribute the tasks immediately.',
-                'task_id' => null,
-                'project_id' => null,
-                'read_at' => null,
-            ]);
-
-            SendEmailNotification::dispatch(
-                $currentUser,
-                'Member Overload Detected',
-                $overloadCount.' member(s) are overloaded across all projects! Please redistribute the tasks immediately.',
-                route('overload.index'),
-            );
-
-            cache()->forever("overload_sent_{$currentUser->id}", true);
-        } else {
-            $projectGroups = $overloadedMembers->groupBy('project_token');
-
-            foreach ($projectGroups as $projectToken => $members) {
-                $project = \App\Models\Project::with('members')
-                    ->where('token', $projectToken)
-                    ->first();
-
-                if (! $project) {
-                    continue;
-                }
-
-                $overloadCount = $members->count();
-
-                foreach ($project->members as $recipient) {
-                    if (cache()->has("overload_sent_{$recipient->id}_{$project->id}")) {
-                        continue;
-                    }
-
-                    Notification::where('user_id', $recipient->id)
-                        ->where('type', 'member_overload')
-                        ->where('project_id', $project->id)
-                        ->delete();
-
-                    Notification::create([
-                        'user_id' => $recipient->id,
-                        'type' => 'member_overload',
-                        'title' => 'Member Overload Detected',
-                        'message' => $overloadCount.' member(s) are overloaded in project '.$project->name.'! Please redistribute the tasks immediately.',
-                        'task_id' => null,
-                        'project_id' => $project->id,
-                        'read_at' => null,
-                    ]);
-
-                    SendEmailNotification::dispatch(
-                        $recipient,
-                        'Member Overload Detected',
-                        $overloadCount.' member(s) are overloaded in project '.$project->name.'! Please redistribute the tasks immediately.',
-                        route('overload.index'),
-                    );
-
-                    cache()->forever("overload_sent_{$recipient->id}_{$project->id}", true);
-                }
-            }
-        }
-    }
-
     public function sendDeadlineNotificationsPublic($user)
     {
         if (cache()->has("deadline_sent_{$user->id}")) {
@@ -674,54 +511,5 @@ class DashboardController extends Controller
         }
 
         cache()->forever("deadline_sent_{$user->id}", true);
-    }
-
-    public function sendOverloadNotificationsOnLogin($user)
-    {
-        if (cache()->has("overload_sent_{$user->id}")) {
-            return;
-        }
-
-        $isSuperAdmin = $user->isSuperAdmin();
-
-        $projects = $isSuperAdmin
-            ? \App\Models\Project::with('members')->get()
-            : $user->projects()->with('members')->get();
-
-        $overloadedMembers = collect();
-
-        foreach ($projects as $project) {
-            if (! $isSuperAdmin && ! $project->members->contains('id', $user->id)) {
-                continue;
-            }
-            foreach ($project->members as $member) {
-                $count = Task::where('project_id', $project->id)
-                    ->assignedToUser($member->id)
-                    ->whereNotIn('status', ['completed', 'cancelled'])
-                    ->count();
-
-                if ($count >= 5) {
-                    $overloadedMembers->push([
-                        'name' => $member->name,
-                        'project' => $project->name,
-                        'task_count' => $count,
-                        'project_token' => $project->token,
-                        'project_id' => $project->id,
-                    ]);
-                }
-            }
-        }
-
-        if ($overloadedMembers->isEmpty()) {
-            Notification::where('user_id', $user->id)
-                ->where('type', 'member_overload')
-                ->delete();
-
-            return;
-        }
-
-        $this->sendOverloadNotifications($overloadedMembers, $user);
-
-        cache()->forever("overload_sent_{$user->id}", true);
     }
 }

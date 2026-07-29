@@ -151,20 +151,21 @@
                     </span>
                 </a>
 
-                {{-- Overload --}}
-                <a href="{{ route('overload.index') }}"
-                    class="flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all duration-200
-                        {{ request()->routeIs('overload.*')
-                            ? 'text-white shadow-lg'
-                            : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
-                    style="{{ request()->routeIs('overload.*') ? 'background-color: #0096c7' : '' }}">
+                @if ($canViewWorkload ?? false)
+                    <a href="{{ route('overload.index') }}"
+                        class="flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all duration-200
+                            {{ request()->routeIs('overload.*')
+                                ? 'text-white shadow-lg'
+                                : 'text-gray-600 hover:bg-gray-900/10 hover:text-gray-900' }}"
+                        style="{{ request()->routeIs('overload.*') ? 'background-color: #0096c7' : '' }}">
 
-                    <i class="fa-solid fa-chart-column w-5 text-center text-sm"></i>
+                        <i class="fa-solid fa-chart-column w-5 text-center text-sm"></i>
 
-                    <span class="text-sm font-medium">
-                        Overload
-                    </span>
-                </a>
+                        <span class="text-sm font-medium">
+                            Workload Monitoring
+                        </span>
+                    </a>
+                @endif
 
             </nav>
         </div>

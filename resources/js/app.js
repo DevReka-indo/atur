@@ -12,6 +12,7 @@ import './workspace-chat';
 import './project-discussion';
 import './notifications';
 import './about';
+import './workload-monitoring';
 
 import Alpine from 'alpinejs';
 
