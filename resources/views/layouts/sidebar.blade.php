@@ -366,7 +366,7 @@
                         </span>
                     </a>
 
-                    {{-- About System --}}
+                    {{-- Tentang Aplikasi --}}
                     <a href="{{ route('settings.about') }}"
                         class="flex items-center gap-3 rounded-xl py-2.5 pl-10 pr-3 text-sm
                             transition-all duration-200
@@ -380,7 +380,7 @@
                         <i class="fa-solid fa-circle-info w-5 text-center text-sm"></i>
 
                         <span class="font-medium">
-                            About System
+                            Tentang Aplikasi
                         </span>
                     </a>
 

@@ -39,6 +39,9 @@ Route::get('/', function () {
     return view('auth.login');
 })->name('home');
 
+Route::view('/privacy-policy', 'legal.privacy-policy')
+    ->name('privacy-policy.show');
+
 /*
 |--------------------------------------------------------------------------
 | Google Authentication

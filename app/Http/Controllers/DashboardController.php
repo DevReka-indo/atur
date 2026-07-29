@@ -483,7 +483,7 @@ class DashboardController extends Controller
 
     public function about()
     {
-        return view('settings.about');
+        return view('about.index');
     }
 
     // overload

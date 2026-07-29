@@ -175,7 +175,7 @@
 
                                 <a href="{{ route('settings.about') }}"
                                     class="block px-5 py-3 text-sm hover:bg-gray-100">
-                                    <i class="fas fa-info-circle mr-2"></i> About System
+                                    <i class="fas fa-info-circle mr-2"></i> Tentang Aplikasi
                                 </a>
                             </div>
                         </div>

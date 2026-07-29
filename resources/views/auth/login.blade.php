@@ -131,6 +131,14 @@
                         Sign up
                     </a>
                 </p>
+                <p class="mt-4 text-center text-xs text-gray-500">
+                    <a
+                        href="{{ route('privacy-policy.show') }}"
+                        class="font-medium text-blue-600 transition-colors hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                    >
+                        Kebijakan Privasi
+                    </a>
+                </p>
             </div>
 
         </div>
