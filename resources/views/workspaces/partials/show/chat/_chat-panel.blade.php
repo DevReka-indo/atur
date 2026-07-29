@@ -43,3 +43,5 @@
         </div>
     </div>
 </div>
+
+@include('workspaces.partials.show.chat._edit-message-modal')

@@ -133,7 +133,7 @@ class WorkspaceChatMentionParser
         $html = collect($this->segments($content))
             ->map(function (array $segment): string {
                 if ($segment['type'] === 'mention') {
-                    return '<span class="rounded bg-sky-50 px-1 py-0.5 font-semibold text-sky-700">'
+                    return '<span class="rounded bg-blue-50 px-1 py-0.5 font-semibold text-blue-700">'
                         .e($segment['text'])
                         .'</span>';
                 }

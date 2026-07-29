@@ -122,12 +122,15 @@ class DiscussionRouteTest extends TestCase
     public function test_thread_preview_uses_safe_dom_text_rendering(): void
     {
         $discussionScript = file_get_contents(resource_path('js/project-discussion.js'));
+        $mentionComposer = file_get_contents(resource_path('js/mention-composer.js'));
 
         $this->assertIsString($discussionScript);
+        $this->assertIsString($mentionComposer);
         $this->assertStringContainsString('preview.textContent =', $discussionScript);
-        $this->assertStringContainsString('document.createTextNode(segment.text)', $discussionScript);
-        $this->assertStringContainsString('mention.textContent = segment.text', $discussionScript);
+        $this->assertStringContainsString('document.createTextNode(segment.text)', $mentionComposer);
+        $this->assertStringContainsString('mention.textContent = segment.text', $mentionComposer);
         $this->assertStringNotContainsString('innerHTML', $discussionScript);
+        $this->assertStringNotContainsString('innerHTML', $mentionComposer);
     }
 
     public function test_chat_frontend_contains_cursor_polling_and_visibility_controls(): void

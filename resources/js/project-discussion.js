@@ -1,3 +1,5 @@
+import { createMentionComposer, renderMentionContent } from './mention-composer';
+
 const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.content ?? '';
 
 const openModal = (modal) => {
@@ -120,22 +122,9 @@ const initializeThreadList = () => {
 };
 
 const renderMessageContent = (element, message) => {
-    element.replaceChildren();
-
-    (message.content_segments || [
+    renderMentionContent(element, message.content_segments || [
         { type: 'text', text: message.plain_text || message.content },
-    ]).forEach((segment) => {
-        if (segment.type === 'mention') {
-            const mention = document.createElement('span');
-            mention.className = 'rounded bg-indigo-50 px-1 py-0.5 font-semibold text-indigo-700';
-            mention.textContent = segment.text;
-            element.append(mention);
-
-            return;
-        }
-
-        element.append(document.createTextNode(segment.text));
-    });
+    ]);
 };
 
 const createMessageElement = (message, currentUserId) => {
@@ -247,8 +236,14 @@ const initializeDiscussionChat = () => {
     const loadOlderError = document.getElementById('discussion-load-older-error');
     const newMessagesIndicator = document.getElementById('discussion-new-messages');
     const mentionSuggestions = document.getElementById('project-discussion-mention-list');
-    const mentionPreview = document.getElementById('discussion-mention-preview');
+    const composerPlaceholder = document.getElementById('discussion-message-placeholder');
+    const composerFallback = document.getElementById('discussion-composer-fallback');
     const targetMessageState = document.getElementById('discussion-target-message-state');
+    const editInput = document.getElementById('edit-message-content');
+    const editPlaceholder = document.getElementById('edit-message-placeholder');
+    const editFallback = document.getElementById('edit-message-fallback');
+    const editForm = document.getElementById('edit-message-form');
+    const editSubmit = editForm?.querySelector('button[type="submit"]');
     const currentUserId = Number(root.dataset.currentUserId);
     const knownMessageIds = new Set(
         [...list.querySelectorAll('[data-discussion-message]')]
@@ -265,7 +260,8 @@ const initializeDiscussionChat = () => {
     let mentionSearchController = null;
     let mentionOptions = [];
     let activeMentionIndex = -1;
-    let mentionStart = null;
+    let mentionComposer = null;
+    let editComposer = null;
     let targetModeActive = Boolean(Number(root.dataset.targetMessageId));
     const pollingDelays = [5000, 10000, 20000, 30000];
 
@@ -482,14 +478,20 @@ const initializeDiscussionChat = () => {
 
     form?.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const content = input?.value.trim() ?? '';
+        const content = mentionComposer?.serialize() ?? '';
         if (!content) {
+            showError('Message is required.');
+            return;
+        }
+        if (content.length > 1000) {
+            showError('Message cannot exceed 1000 characters.');
             return;
         }
 
         error?.classList.add('hidden');
         const submit = form.querySelector('button[type="submit"]');
         submit.disabled = true;
+        mentionComposer.setDisabled(true);
 
         try {
             const message = await request(root.dataset.messageStoreUrl, {
@@ -497,15 +499,15 @@ const initializeDiscussionChat = () => {
                 body: JSON.stringify({ content }),
             });
             addMessages([message], 'append');
-            input.value = '';
-            renderMentionPreview();
+            mentionComposer.clear();
             closeMentionSuggestions();
             scrollToBottom();
         } catch (requestError) {
             showError(requestError.message);
         } finally {
             submit.disabled = false;
-            input?.focus();
+            mentionComposer.setDisabled(false);
+            mentionComposer.focus();
         }
     });
 
@@ -517,10 +519,9 @@ const initializeDiscussionChat = () => {
 
         if (event.target.closest('[data-message-edit]')) {
             selectedMessage = message;
-            const textarea = document.getElementById('edit-message-content');
-            textarea.value = message.dataset.messageContent;
+            editComposer.deserialize(message.dataset.messageContent);
             openModal(document.getElementById('edit-message-modal'));
-            textarea.focus();
+            editComposer.focus();
         }
 
         if (event.target.closest('[data-message-delete]')) {
@@ -529,17 +530,23 @@ const initializeDiscussionChat = () => {
         }
     });
 
-    document.getElementById('edit-message-form')?.addEventListener('submit', async (event) => {
+    editForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!selectedMessage) {
             return;
         }
 
-        const textarea = document.getElementById('edit-message-content');
-        const content = textarea.value.trim();
+        const content = editComposer.serialize();
         if (!content) {
             return;
         }
+        if (content.length > 1000) {
+            window.alert('Message cannot exceed 1000 characters.');
+            return;
+        }
+
+        editSubmit.disabled = true;
+        editComposer.setDisabled(true);
 
         try {
             const message = await request(
@@ -559,6 +566,9 @@ const initializeDiscussionChat = () => {
             selectedMessage = null;
         } catch (requestError) {
             window.alert(requestError.message);
+        } finally {
+            editSubmit.disabled = false;
+            editComposer.setDisabled(false);
         }
     });
 
@@ -608,28 +618,6 @@ const initializeDiscussionChat = () => {
         input?.setAttribute('aria-expanded', 'false');
         mentionOptions = [];
         activeMentionIndex = -1;
-        mentionStart = null;
-    };
-
-    const renderMentionPreview = () => {
-        if (!mentionPreview || !input) {
-            return;
-        }
-
-        const markerPattern = /@\[([^\]\r\n]{1,255})\]\(user:([1-9][0-9]*)\)/gu;
-        const mentions = new Map();
-        for (const match of input.value.matchAll(markerPattern)) {
-            mentions.set(match[2], match[1]);
-        }
-
-        mentionPreview.replaceChildren();
-        mentions.forEach((name) => {
-            const label = document.createElement('span');
-            label.className = 'inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700';
-            label.textContent = `@${name}`;
-            mentionPreview.append(label);
-        });
-        mentionPreview.classList.toggle('hidden', mentions.size === 0);
     };
 
     const setActiveMention = (index) => {
@@ -648,33 +636,14 @@ const initializeDiscussionChat = () => {
     };
 
     const insertMention = (member) => {
-        if (mentionStart === null || !input) {
-            return;
-        }
-
-        const cursor = input.selectionStart;
-        const safeName = member.name
-            .replace(/[\[\]()\r\n]+/g, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 100) || 'User';
-        const marker = `@[${safeName}](user:${member.id}) `;
-        const nextValue = input.value.slice(0, mentionStart)
-            + marker
-            + input.value.slice(cursor);
-
-        if (nextValue.length > 1000) {
+        if (!mentionComposer?.insertMention(member)) {
             showError('Message cannot exceed 1000 characters.');
 
             return;
         }
 
-        input.value = nextValue;
-        const nextCursor = mentionStart + marker.length;
-        input.setSelectionRange(nextCursor, nextCursor);
-        renderMentionPreview();
         closeMentionSuggestions();
-        input.focus();
+        mentionComposer.focus();
     };
 
     const renderMentionSuggestions = (members) => {
@@ -737,17 +706,7 @@ const initializeDiscussionChat = () => {
     };
 
     const mentionContext = () => {
-        if (!input) {
-            return null;
-        }
-
-        const cursor = input.selectionStart;
-        const textBeforeCursor = input.value.slice(0, cursor);
-        const match = textBeforeCursor.match(/(^|\s)@([^\s@[\]()]{0,50})$/u);
-
-        return match
-            ? { start: textBeforeCursor.lastIndexOf('@'), search: match[2] }
-            : null;
+        return mentionComposer?.mentionQuery() ?? null;
     };
 
     const searchMentions = async (context) => {
@@ -761,7 +720,6 @@ const initializeDiscussionChat = () => {
                 method: 'GET',
                 signal: mentionSearchController.signal,
             });
-            mentionStart = context.start;
             renderMentionSuggestions(payload.members);
         } catch (requestError) {
             if (requestError.name !== 'AbortError') {
@@ -782,14 +740,9 @@ const initializeDiscussionChat = () => {
             return;
         }
 
-        mentionStart = context.start;
         mentionSearchTimer = window.setTimeout(() => searchMentions(context), 200);
     };
 
-    input?.addEventListener('input', () => {
-        renderMentionPreview();
-        queueMentionSearch();
-    });
     input?.addEventListener('click', queueMentionSearch);
     input?.addEventListener('blur', () => {
         window.setTimeout(closeMentionSuggestions, 150);
@@ -821,10 +774,23 @@ const initializeDiscussionChat = () => {
         mentionSearchController?.abort();
     });
 
+    mentionComposer = createMentionComposer(input, {
+        maxLength: 1000,
+        placeholder: composerPlaceholder,
+        fallback: composerFallback,
+        onInput: queueMentionSearch,
+    });
+    editComposer = createMentionComposer(editInput, {
+        maxLength: 1000,
+        placeholder: editPlaceholder,
+        fallback: editFallback,
+    });
+    form.querySelector('button[type="submit"]').disabled = false;
+    editSubmit.disabled = false;
+
     if (!highlightTargetMessage()) {
         scrollToBottom();
     }
-    renderMentionPreview();
     schedulePoll();
 };
 

@@ -794,7 +794,7 @@ class DiscussionAuthorizationTest extends TestCase
             ->assertSee('&lt;b&gt;escaped&lt;/b&gt;', false)
             ->assertDontSee('<b>escaped</b>', false);
 
-        $this->assertStringContainsString('text-indigo-700', $response->getContent());
+        $this->assertStringContainsString('text-blue-700', $response->getContent());
     }
 
     public function test_update_syncs_mentions_without_renotification_spam(): void

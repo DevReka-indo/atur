@@ -131,7 +131,7 @@ class ProjectDiscussionMentionParser
         $html = collect($this->segments($content))
             ->map(function (array $segment): string {
                 if ($segment['type'] === 'mention') {
-                    return '<span class="rounded bg-indigo-50 px-1 py-0.5 font-semibold text-indigo-700">'
+                    return '<span class="rounded bg-blue-50 px-1 py-0.5 font-semibold text-blue-700">'
                         .e($segment['text'])
                         .'</span>';
                 }

@@ -398,7 +398,7 @@ class WorkspaceChatMentionNotificationTest extends TestCase
         $xpath = new \DOMXPath($document);
         $content = $xpath->query('//*[@data-chat-content]')->item(0);
         $mention = $xpath->query(
-            "//*[@data-chat-content]//span[contains(@class, 'text-sky-700')]",
+            "//*[@data-chat-content]//span[contains(@class, 'text-blue-700')]",
         )->item(0);
 
         $this->assertSame('Halo @'.$name.' <b>escaped</b>', $content->textContent);

@@ -1,3 +1,5 @@
+import { createMentionComposer, renderMentionContent } from './mention-composer';
+
 const chatRoot = document.querySelector('[data-workspace-chat]');
 
 if (chatRoot) {
@@ -11,8 +13,15 @@ if (chatRoot) {
     const loadOlderButton = chatRoot.querySelector('[data-chat-load-older]');
     const newMessagesIndicator = chatRoot.querySelector('[data-chat-new-indicator]');
     const mentionSuggestions = chatRoot.querySelector('[data-chat-mention-suggestions]');
-    const mentionPreview = chatRoot.querySelector('[data-chat-mention-preview]');
     const targetStatus = chatRoot.querySelector('[data-chat-target-status]');
+    const composerPlaceholder = chatRoot.querySelector('[data-chat-placeholder]');
+    const composerFallback = chatRoot.querySelector('[data-chat-composer-fallback]');
+    const editModal = document.querySelector('[data-chat-edit-modal]');
+    const editForm = document.querySelector('[data-chat-edit-form]');
+    const editInput = document.querySelector('[data-chat-edit-input]');
+    const editPlaceholder = document.querySelector('[data-chat-edit-placeholder]');
+    const editFallback = document.querySelector('[data-chat-edit-fallback]');
+    const editSubmit = document.querySelector('[data-chat-edit-submit]');
     const csrfToken = composer.querySelector('input[name="_token"]').value;
     const knownMessageIds = new Set(
         [...messageList.querySelectorAll('[data-chat-message]')]
@@ -28,7 +37,9 @@ if (chatRoot) {
     let mentionSearchController = null;
     let mentionOptions = [];
     let activeMentionIndex = -1;
-    let mentionStart = null;
+    let selectedMessageElement = null;
+    let mentionComposer = null;
+    let editComposer = null;
 
     const messageElements = () => [...messageList.querySelectorAll('[data-chat-message]')];
     const firstMessageId = () => Number(messageElements()[0]?.dataset.messageId || 0);
@@ -69,22 +80,9 @@ if (chatRoot) {
     };
 
     const renderMessageContent = (element, message) => {
-        element.replaceChildren();
-
-        (message.content_segments || [
+        renderMentionContent(element, message.content_segments || [
             { type: 'text', text: message.plain_text || message.content },
-        ]).forEach((segment) => {
-            if (segment.type === 'mention') {
-                const mention = document.createElement('span');
-                addClasses(mention, 'rounded bg-sky-50 px-1 py-0.5 font-semibold text-sky-700');
-                mention.textContent = segment.text;
-                element.append(mention);
-
-                return;
-            }
-
-            element.append(document.createTextNode(segment.text));
-        });
+        ]);
     };
 
     const createMessageElement = (message) => {
@@ -241,28 +239,6 @@ if (chatRoot) {
         input.setAttribute('aria-expanded', 'false');
         mentionOptions = [];
         activeMentionIndex = -1;
-        mentionStart = null;
-    };
-
-    const renderMentionPreview = () => {
-        const markerPattern = /@\[([^\]\r\n]{1,255})\]\(user:([1-9][0-9]*)\)/gu;
-        const mentions = new Map();
-
-        for (const match of input.value.matchAll(markerPattern)) {
-            mentions.set(match[2], match[1]);
-        }
-
-        mentionPreview.replaceChildren();
-        mentions.forEach((name) => {
-            const label = document.createElement('span');
-            addClasses(
-                label,
-                'inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700',
-            );
-            label.textContent = `@${name}`;
-            mentionPreview.append(label);
-        });
-        mentionPreview.classList.toggle('hidden', mentions.size === 0);
     };
 
     const setActiveMention = (index) => {
@@ -282,33 +258,14 @@ if (chatRoot) {
     };
 
     const insertMention = (member) => {
-        if (mentionStart === null) {
-            return;
-        }
-
-        const cursor = input.selectionStart;
-        const safeName = member.name
-            .replace(/[\[\]()\r\n]+/g, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 100) || 'User';
-        const marker = `@[${safeName}](user:${member.id}) `;
-        const nextValue = input.value.slice(0, mentionStart)
-            + marker
-            + input.value.slice(cursor);
-
-        if (nextValue.length > 1000) {
+        if (!mentionComposer?.insertMention(member)) {
             showError('Message cannot exceed 1000 characters.');
 
             return;
         }
 
-        input.value = nextValue;
-        const nextCursor = mentionStart + marker.length;
-        input.setSelectionRange(nextCursor, nextCursor);
-        renderMentionPreview();
         closeMentionSuggestions();
-        input.focus();
+        mentionComposer.focus();
     };
 
     const renderMentionSuggestions = (members) => {
@@ -374,18 +331,7 @@ if (chatRoot) {
     };
 
     const mentionContext = () => {
-        const cursor = input.selectionStart;
-        const textBeforeCursor = input.value.slice(0, cursor);
-        const match = textBeforeCursor.match(/(^|\s)@([^\s@[\]()]{0,50})$/u);
-
-        if (!match) {
-            return null;
-        }
-
-        return {
-            start: textBeforeCursor.lastIndexOf('@'),
-            search: match[2],
-        };
+        return mentionComposer?.mentionQuery() ?? null;
     };
 
     const searchMentions = async (context) => {
@@ -398,7 +344,6 @@ if (chatRoot) {
             const payload = await requestJson(url, {
                 signal: mentionSearchController.signal,
             });
-            mentionStart = context.start;
             renderMentionSuggestions(payload.members);
         } catch (error) {
             if (error.name !== 'AbortError') {
@@ -420,7 +365,6 @@ if (chatRoot) {
             return;
         }
 
-        mentionStart = context.start;
         mentionSearchTimer = window.setTimeout(() => searchMentions(context), 200);
     };
 
@@ -501,25 +445,36 @@ if (chatRoot) {
     composer.addEventListener('submit', async (event) => {
         event.preventDefault();
         clearError();
+        const content = mentionComposer.serialize();
+        if (!content) {
+            showError('Message is required.');
+            return;
+        }
+        if (content.length > 1000) {
+            showError('Message cannot exceed 1000 characters.');
+            return;
+        }
+
         submitButton.disabled = true;
         submitLabel.textContent = 'Sending...';
+        mentionComposer.setDisabled(true);
         closeMentionSuggestions();
 
         try {
             const message = await requestJson(chatRoot.dataset.storeUrl, {
                 method: 'POST',
-                body: JSON.stringify({ content: input.value }),
+                body: JSON.stringify({ content }),
             });
             appendMessages([message], true);
-            input.value = '';
-            renderMentionPreview();
+            mentionComposer.clear();
             await markLatestRead();
         } catch (error) {
             showError(error.message);
         } finally {
             submitButton.disabled = false;
             submitLabel.textContent = 'Send';
-            input.focus();
+            mentionComposer.setDisabled(false);
+            mentionComposer.focus();
         }
     });
 
@@ -567,32 +522,11 @@ if (chatRoot) {
         const messageId = messageElement.dataset.messageId;
 
         if (event.target.closest('[data-chat-edit]')) {
-            const contentElement = messageElement.querySelector('[data-chat-content]');
-            const content = window.prompt(
-                'Edit message',
-                messageElement.dataset.messageContent,
-            );
-
-            if (content === null) {
-                return;
-            }
-
-            clearError();
-
-            try {
-                const message = await requestJson(
-                    chatRoot.dataset.updateUrlTemplate.replace('__MESSAGE_ID__', messageId),
-                    {
-                        method: 'PATCH',
-                        body: JSON.stringify({ content }),
-                    },
-                );
-                messageElement.dataset.messageContent = message.content;
-                renderMessageContent(contentElement, message);
-                messageElement.querySelector('[data-chat-edited]').classList.remove('hidden');
-            } catch (error) {
-                showError(error.message);
-            }
+            selectedMessageElement = messageElement;
+            editComposer.deserialize(messageElement.dataset.messageContent);
+            editModal.classList.remove('hidden');
+            editModal.classList.add('flex');
+            editComposer.focus();
         }
 
         if (event.target.closest('[data-chat-delete]')
@@ -619,10 +553,6 @@ if (chatRoot) {
         markLatestRead();
     });
 
-    input.addEventListener('input', () => {
-        renderMentionPreview();
-        queueMentionSearch();
-    });
     input.addEventListener('click', queueMentionSearch);
     input.addEventListener('blur', () => {
         window.setTimeout(closeMentionSuggestions, 150);
@@ -644,6 +574,64 @@ if (chatRoot) {
         } else if (event.key === 'Escape') {
             event.preventDefault();
             closeMentionSuggestions();
+        }
+    });
+
+    const closeEditModal = () => {
+        editModal.classList.add('hidden');
+        editModal.classList.remove('flex');
+        selectedMessageElement = null;
+    };
+
+    chatRoot.querySelector('[data-chat-edit-cancel]')?.addEventListener('click', closeEditModal);
+    editModal?.addEventListener('click', (event) => {
+        if (event.target === editModal) {
+            closeEditModal();
+        }
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !editModal.classList.contains('hidden')) {
+            closeEditModal();
+        }
+    });
+    editForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const content = editComposer.serialize();
+        if (!selectedMessageElement || !content) {
+            return;
+        }
+        if (content.length > 1000) {
+            showError('Message cannot exceed 1000 characters.');
+            return;
+        }
+
+        clearError();
+        editSubmit.disabled = true;
+        editComposer.setDisabled(true);
+
+        try {
+            const message = await requestJson(
+                chatRoot.dataset.updateUrlTemplate.replace(
+                    '__MESSAGE_ID__',
+                    selectedMessageElement.dataset.messageId,
+                ),
+                {
+                    method: 'PATCH',
+                    body: JSON.stringify({ content }),
+                },
+            );
+            selectedMessageElement.dataset.messageContent = message.content;
+            renderMessageContent(
+                selectedMessageElement.querySelector('[data-chat-content]'),
+                message,
+            );
+            selectedMessageElement.querySelector('[data-chat-edited]').classList.remove('hidden');
+            closeEditModal();
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            editSubmit.disabled = false;
+            editComposer.setDisabled(false);
         }
     });
 
@@ -673,10 +661,23 @@ if (chatRoot) {
         mentionSearchController?.abort();
     });
 
+    mentionComposer = createMentionComposer(input, {
+        maxLength: 1000,
+        placeholder: composerPlaceholder,
+        fallback: composerFallback,
+        onInput: queueMentionSearch,
+    });
+    editComposer = createMentionComposer(editInput, {
+        maxLength: 1000,
+        placeholder: editPlaceholder,
+        fallback: editFallback,
+    });
+    submitButton.disabled = false;
+    editSubmit.disabled = false;
+
     if (!highlightTargetMessage()) {
         messageList.scrollTop = messageList.scrollHeight;
     }
-    renderMentionPreview();
     markLatestRead();
     schedulePoll();
 }

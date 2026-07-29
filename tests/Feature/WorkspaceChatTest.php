@@ -376,6 +376,7 @@ class WorkspaceChatTest extends TestCase
             '_message-list.blade.php',
             '_message-item.blade.php',
             '_composer.blade.php',
+            '_edit-message-modal.blade.php',
             '_empty-state.blade.php',
             '_mention-suggestions.blade.php',
             '_message-highlight.blade.php',

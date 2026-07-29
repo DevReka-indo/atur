@@ -1,28 +1,31 @@
 <footer class="flex-shrink-0 border-t border-gray-200 bg-gray-100 p-3">
     <form id="discussion-message-form" class="flex items-end gap-2">
-        <label class="sr-only" for="discussion-message-input">Message</label>
         <div class="relative min-w-0 flex-1">
-            <textarea
+            <div
                 id="discussion-message-input"
-                name="content"
-                rows="2"
-                maxlength="1000"
-                autocomplete="off"
-                placeholder="Write a message... Use @ to mention a member."
+                role="textbox"
+                aria-label="Project discussion message"
+                aria-multiline="true"
                 aria-autocomplete="list"
                 aria-controls="project-discussion-mention-list"
                 aria-expanded="false"
-                class="min-h-10 w-full resize-none rounded-2xl border-0 bg-white px-4 py-2.5 text-sm shadow-sm focus:ring-2 focus:ring-indigo-300"
-            ></textarea>
-            @include('discussion.partials.chat._mention-suggestions')
-            <div
-                id="discussion-mention-preview"
-                class="mt-2 hidden flex flex-wrap gap-1.5"
-                aria-label="Selected mentions"
+                aria-disabled="true"
+                contenteditable="false"
+                class="hidden min-h-10 max-h-36 w-full overflow-y-auto whitespace-pre-wrap break-words rounded-2xl border-0 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:ring-2 focus:ring-indigo-300"
             ></div>
+            <span
+                class="pointer-events-none absolute left-4 top-2.5 text-sm text-gray-400"
+                id="discussion-message-placeholder"
+                aria-hidden="true"
+            >Write a message... Use @ to mention a member.</span>
+            @include('discussion.partials.chat._mention-suggestions')
+            <p class="px-3 text-xs text-amber-700" id="discussion-composer-fallback">
+                Composer requires JavaScript. Sending is disabled until it is ready.
+            </p>
         </div>
         <button
             type="submit"
+            disabled
             class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-300"
             title="Send message"
         >
