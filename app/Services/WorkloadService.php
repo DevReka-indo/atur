@@ -161,6 +161,55 @@ class WorkloadService
         ];
     }
 
+    /**
+     * @return array{
+     *     normal_count: int,
+     *     attention_count: int,
+     *     high_risk_count: int,
+     *     critical_count: int,
+     *     affected_count: int,
+     *     highest_level: string,
+     *     period_label: string,
+     *     report_url: string
+     * }
+     */
+    public function dashboardSummary(User $actor): array
+    {
+        $filters = $this->normalizeFilters($actor, [
+            'scope' => 'managed',
+            'period' => 'next_7_days',
+        ]);
+        $period = $this->resolvePeriod($filters);
+        $projectIds = $this->authorizedProjectIds($actor, $filters['scope']);
+        $summary = $this->summary(
+            $this->workloadMemberQuery($projectIds, $period),
+        );
+        $affectedLevels = array_filter([
+            'attention' => $summary['attention_count'],
+            'high_risk' => $summary['high_risk_count'],
+            'critical' => $summary['critical_count'],
+        ]);
+        $highestLevel = match (true) {
+            $summary['critical_count'] > 0 => 'critical',
+            $summary['high_risk_count'] > 0 => 'high_risk',
+            $summary['attention_count'] > 0 => 'attention',
+            default => 'normal',
+        };
+        $reportParameters = ['period' => 'next_7_days'];
+
+        if (count($affectedLevels) === 1) {
+            $reportParameters['level'] = array_key_first($affectedLevels);
+        }
+
+        return [
+            ...$summary,
+            'affected_count' => array_sum($affectedLevels),
+            'highest_level' => $highestLevel,
+            'period_label' => $period['label'],
+            'report_url' => route('overload.index', $reportParameters),
+        ];
+    }
+
     public function canView(User $user): bool
     {
         if ($user->isSuperAdmin()) {
@@ -415,6 +464,36 @@ class WorkloadService
         array $period,
         array $filters,
     ): EloquentBuilder {
+        $query = $this->workloadMemberQuery($projectIds, $period)
+            ->addSelect([
+                'users.name',
+                'users.email',
+                'users.employee_id',
+                'users.profile_photo',
+                'users.job_title',
+            ]);
+
+        if ($filters['search'] !== '') {
+            $search = '%'.$filters['search'].'%';
+            $query->where(function (EloquentBuilder $searchQuery) use ($search): void {
+                $searchQuery
+                    ->where('users.name', 'like', $search)
+                    ->orWhere('users.email', 'like', $search)
+                    ->orWhere('users.employee_id', 'like', $search);
+            });
+        }
+
+        $this->applyLevelFilter($query, $filters['level']);
+
+        return $query;
+    }
+
+    /**
+     * @param  Collection<int, int>  $projectIds
+     * @param  array{start: string, end: string}  $period
+     */
+    private function workloadMemberQuery(Collection $projectIds, array $period): EloquentBuilder
+    {
         $aggregateQuery = DB::query()
             ->fromSub($this->taskContributionQuery($projectIds, $period), 'workload_tasks')
             ->select('user_id')
@@ -426,14 +505,7 @@ class WorkloadService
             ->groupBy('user_id');
 
         $query = User::query()
-            ->select([
-                'users.id',
-                'users.name',
-                'users.email',
-                'users.employee_id',
-                'users.profile_photo',
-                'users.job_title',
-            ])
+            ->select('users.id')
             ->selectRaw('COALESCE(workload_totals.workload_score, 0) as workload_score')
             ->selectRaw('COALESCE(workload_totals.contributing_task_count, 0) as contributing_task_count')
             ->selectRaw('COALESCE(workload_totals.contributing_project_count, 0) as contributing_project_count')
@@ -449,18 +521,6 @@ class WorkloadService
                 ->whereColumn('project_members.user_id', 'users.id')
                 ->whereIn('project_members.project_id', $projectIds);
         });
-
-        if ($filters['search'] !== '') {
-            $search = '%'.$filters['search'].'%';
-            $query->where(function (EloquentBuilder $searchQuery) use ($search): void {
-                $searchQuery
-                    ->where('users.name', 'like', $search)
-                    ->orWhere('users.email', 'like', $search)
-                    ->orWhere('users.employee_id', 'like', $search);
-            });
-        }
-
-        $this->applyLevelFilter($query, $filters['level']);
 
         return $query;
     }
@@ -566,17 +626,18 @@ class WorkloadService
         }
 
         $scoreExpression = 'COALESCE(workload_totals.workload_score, 0)';
+        $numericThreshold = 'CAST(? AS DECIMAL(20, 6))';
         $thresholds = $this->thresholds();
 
         match ($level) {
-            'normal' => $query->whereRaw("{$scoreExpression} < ?", [$thresholds['attention']]),
+            'normal' => $query->whereRaw("{$scoreExpression} < {$numericThreshold}", [$thresholds['attention']]),
             'attention' => $query
-                ->whereRaw("{$scoreExpression} >= ?", [$thresholds['attention']])
-                ->whereRaw("{$scoreExpression} < ?", [$thresholds['high_risk']]),
+                ->whereRaw("{$scoreExpression} >= {$numericThreshold}", [$thresholds['attention']])
+                ->whereRaw("{$scoreExpression} < {$numericThreshold}", [$thresholds['high_risk']]),
             'high_risk' => $query
-                ->whereRaw("{$scoreExpression} >= ?", [$thresholds['high_risk']])
-                ->whereRaw("{$scoreExpression} < ?", [$thresholds['critical']]),
-            'critical' => $query->whereRaw("{$scoreExpression} >= ?", [$thresholds['critical']]),
+                ->whereRaw("{$scoreExpression} >= {$numericThreshold}", [$thresholds['high_risk']])
+                ->whereRaw("{$scoreExpression} < {$numericThreshold}", [$thresholds['critical']]),
+            'critical' => $query->whereRaw("{$scoreExpression} >= {$numericThreshold}", [$thresholds['critical']]),
         };
     }
 
@@ -586,13 +647,14 @@ class WorkloadService
     private function summary(EloquentBuilder $memberQuery): array
     {
         $thresholds = $this->thresholds();
+        $numericThreshold = 'CAST(? AS DECIMAL(20, 6))';
         $summary = DB::query()
             ->fromSub($memberQuery->toBase(), 'workload_members')
             ->selectRaw('COUNT(*) as total_members')
-            ->selectRaw('SUM(CASE WHEN workload_score < ? THEN 1 ELSE 0 END) as normal_count', [$thresholds['attention']])
-            ->selectRaw('SUM(CASE WHEN workload_score >= ? AND workload_score < ? THEN 1 ELSE 0 END) as attention_count', [$thresholds['attention'], $thresholds['high_risk']])
-            ->selectRaw('SUM(CASE WHEN workload_score >= ? AND workload_score < ? THEN 1 ELSE 0 END) as high_risk_count', [$thresholds['high_risk'], $thresholds['critical']])
-            ->selectRaw('SUM(CASE WHEN workload_score >= ? THEN 1 ELSE 0 END) as critical_count', [$thresholds['critical']])
+            ->selectRaw("SUM(CASE WHEN workload_score < {$numericThreshold} THEN 1 ELSE 0 END) as normal_count", [$thresholds['attention']])
+            ->selectRaw("SUM(CASE WHEN workload_score >= {$numericThreshold} AND workload_score < {$numericThreshold} THEN 1 ELSE 0 END) as attention_count", [$thresholds['attention'], $thresholds['high_risk']])
+            ->selectRaw("SUM(CASE WHEN workload_score >= {$numericThreshold} AND workload_score < {$numericThreshold} THEN 1 ELSE 0 END) as high_risk_count", [$thresholds['high_risk'], $thresholds['critical']])
+            ->selectRaw("SUM(CASE WHEN workload_score >= {$numericThreshold} THEN 1 ELSE 0 END) as critical_count", [$thresholds['critical']])
             ->selectRaw('COALESCE(SUM(overdue_count), 0) as overdue_count')
             ->selectRaw('COALESCE(SUM(unscheduled_count), 0) as unscheduled_count')
             ->first();

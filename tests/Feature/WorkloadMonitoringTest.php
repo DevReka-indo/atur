@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\DashboardController;
 use App\Models\Notification;
 use App\Models\Project;
 use App\Models\Task;
@@ -35,6 +36,18 @@ class WorkloadMonitoringTest extends TestCase
             $table->string('profile_photo')->nullable();
             $table->string('job_title')->nullable();
         });
+        Schema::create('device_users', function (Blueprint $table): void {
+            $table->id();
+            $table->string('device_id');
+            $table->foreignId('user_id');
+            $table->timestamps();
+        });
+        DB::connection()->getPdo()->sqliteCreateFunction(
+            'FIELD',
+            fn ($value, ...$values): int => ($position = array_search($value, $values, true)) === false
+                ? 0
+                : $position + 1,
+        );
         Carbon::setTestNow('2026-07-29 09:00:00');
         $this->withoutVite();
         $this->workloadService = app(WorkloadService::class);
@@ -232,6 +245,226 @@ class WorkloadMonitoringTest extends TestCase
         $this->assertSame(0, $staleProjectResult['members']->total());
         $this->assertNotContains($foreignProject->workspace_id, $staleWorkspaceResult['workspaces']->pluck('id')->all());
         $this->assertNotContains($foreignProject->id, $staleProjectResult['projects']->pluck('id')->all());
+    }
+
+    public function test_dashboard_workload_summary_uses_normal_state_and_default_period(): void
+    {
+        [$actor, $project] = $this->actorProject();
+        $this->task($project, [$actor]);
+
+        $summary = $this->workloadService->dashboardSummary($actor);
+
+        $this->assertSame(1, $summary['normal_count']);
+        $this->assertSame(0, $summary['affected_count']);
+        $this->assertSame('normal', $summary['highest_level']);
+        $this->assertSame('7 Hari ke Depan', $summary['period_label']);
+        $this->assertReportUrl($summary['report_url'], null);
+
+        $this->view('dashboard.partials._workload-link', ['workloadSummary' => $summary])
+            ->assertSee('data-workload-level="normal"', false)
+            ->assertSee('Workload Monitoring')
+            ->assertSee('Tidak ada risiko beban tugas pada periode 7 Hari ke Depan.')
+            ->assertSee('Berdasarkan Skor Beban Tugas untuk 7 Hari ke Depan.')
+            ->assertSee('bg-sky-50/70', false)
+            ->assertDontSee('bg-gradient', false);
+    }
+
+    #[DataProvider('dashboardRiskLevelProvider')]
+    public function test_dashboard_workload_summary_uses_highest_single_risk_state_and_filtered_cta(
+        int $taskCount,
+        string $level,
+        string $title,
+        string $tone,
+    ): void {
+        [$actor, $project] = $this->actorProject();
+
+        for ($taskIndex = 0; $taskIndex < $taskCount; $taskIndex++) {
+            $this->task($project, [$actor]);
+        }
+
+        $summary = $this->workloadService->dashboardSummary($actor);
+
+        $this->assertSame((float) $taskCount, $this->memberResult($actor)['score']);
+        $this->assertSame(1, $summary[$level.'_count']);
+        $this->assertSame(1, $summary['affected_count']);
+        $this->assertSame($level, $summary['highest_level']);
+        $this->assertReportUrl($summary['report_url'], $level);
+
+        $this->view('dashboard.partials._workload-link', ['workloadSummary' => $summary])
+            ->assertSee($title)
+            ->assertSee($tone, false)
+            ->assertSee('1 anggota');
+    }
+
+    /**
+     * @return array<string, array{int, string, string, string}>
+     */
+    public static function dashboardRiskLevelProvider(): array
+    {
+        return [
+            'attention' => [5, 'attention', 'Workload Perlu Perhatian', 'bg-amber-50/70'],
+            'high risk' => [7, 'high_risk', 'Risiko Beban Tugas Tinggi', 'bg-orange-50/70'],
+            'critical' => [9, 'critical', 'Workload Kritis', 'bg-red-50/70'],
+        ];
+    }
+
+    public function test_dashboard_workload_summary_counts_distinct_users_and_shows_multiple_levels(): void
+    {
+        $owner = User::factory()->create();
+        $actor = User::factory()->create();
+        $attentionMember = User::factory()->create();
+        $highRiskMember = User::factory()->create();
+        $criticalMember = User::factory()->create();
+        $project = $this->projectWithMembers($owner, [
+            $actor->id => Project::ROLE_MEMBER,
+            $attentionMember->id => Project::ROLE_MEMBER,
+            $highRiskMember->id => Project::ROLE_MEMBER,
+            $criticalMember->id => Project::ROLE_MEMBER,
+        ]);
+
+        foreach ([
+            [$attentionMember, 5],
+            [$highRiskMember, 7],
+            [$criticalMember, 9],
+        ] as [$member, $taskCount]) {
+            for ($taskIndex = 0; $taskIndex < $taskCount; $taskIndex++) {
+                $this->task($project, [$member]);
+            }
+        }
+
+        $summary = $this->workloadService->dashboardSummary($actor);
+
+        $this->assertSame(1, $summary['normal_count']);
+        $this->assertSame(1, $summary['attention_count']);
+        $this->assertSame(1, $summary['high_risk_count']);
+        $this->assertSame(1, $summary['critical_count']);
+        $this->assertSame(3, $summary['affected_count']);
+        $this->assertSame('critical', $summary['highest_level']);
+        $this->assertReportUrl($summary['report_url'], null);
+
+        $this->view('dashboard.partials._workload-link', ['workloadSummary' => $summary])
+            ->assertSee('1 Kritis ·')
+            ->assertSee('1 Risiko Tinggi ·')
+            ->assertSee('1 Perlu Perhatian');
+    }
+
+    public function test_dashboard_workload_summary_uses_managed_scope_for_super_admin_and_shared_scope_for_member(): void
+    {
+        $superAdmin = User::factory()->superAdmin()->create();
+        $managedMember = User::factory()->create();
+        $foreignOwner = User::factory()->create();
+        $foreignMember = User::factory()->create();
+        $managedProject = $this->projectWithMembers($superAdmin, [
+            $managedMember->id => Project::ROLE_MEMBER,
+        ]);
+        $foreignProject = $this->projectWithMembers($foreignOwner, [
+            $foreignMember->id => Project::ROLE_MEMBER,
+        ]);
+
+        for ($taskIndex = 0; $taskIndex < 5; $taskIndex++) {
+            $this->task($managedProject, [$managedMember]);
+        }
+        for ($taskIndex = 0; $taskIndex < 9; $taskIndex++) {
+            $this->task($foreignProject, [$foreignMember]);
+        }
+
+        $superAdminSummary = $this->workloadService->dashboardSummary($superAdmin);
+        $this->assertSame(1, $superAdminSummary['attention_count']);
+        $this->assertSame(0, $superAdminSummary['critical_count']);
+        $this->assertSame('attention', $superAdminSummary['highest_level']);
+
+        $member = User::factory()->create();
+        $sharedMember = User::factory()->create();
+        $sharedProject = $this->projectWithMembers($foreignOwner, [
+            $member->id => Project::ROLE_MEMBER,
+            $sharedMember->id => Project::ROLE_MEMBER,
+        ]);
+        for ($taskIndex = 0; $taskIndex < 5; $taskIndex++) {
+            $this->task($sharedProject, [$sharedMember]);
+        }
+
+        $memberSummary = $this->workloadService->dashboardSummary($member);
+        $this->assertSame(1, $memberSummary['attention_count']);
+        $this->assertSame(0, $memberSummary['critical_count']);
+        $this->assertSame(2, $memberSummary['normal_count'] + $memberSummary['affected_count']);
+    }
+
+    public function test_dashboard_viewer_does_not_receive_card_or_execute_workload_summary(): void
+    {
+        $owner = User::factory()->create();
+        $viewer = User::factory()->create();
+        $this->projectWithMembers($owner, [$viewer->id => Project::ROLE_VIEWER]);
+        $this->actingAs($viewer);
+
+        $workloadService = \Mockery::mock(WorkloadService::class);
+        $workloadService->shouldReceive('canView')->once()->with($viewer)->andReturnFalse();
+        $workloadService->shouldNotReceive('dashboardSummary');
+
+        $view = (new DashboardController($workloadService))->index();
+
+        $this->assertNull($view->getData()['workloadSummary']);
+        $this->view('dashboard.partials._workload-link', ['workloadSummary' => null])
+            ->assertDontSee('data-dashboard-workload', false);
+    }
+
+    public function test_dashboard_get_is_read_only_for_notifications_mail_queue_device_and_workload_cache(): void
+    {
+        [$actor, $project] = $this->actorProject();
+        $this->task($project, [$actor], [
+            'priority' => 'urgent',
+            'due_date' => '2026-07-29',
+        ]);
+        $notification = Notification::query()->create([
+            'user_id' => $actor->id,
+            'type' => 'member_overload',
+            'title' => 'Existing workload notification',
+            'message' => 'Must remain unchanged',
+        ]);
+        Cache::forget("deadline_sent_{$actor->id}");
+        Cache::put("overload_sent_{$actor->id}", 'unchanged');
+        Mail::fake();
+        Queue::fake();
+        $before = $this->databaseSnapshot();
+        $deviceCount = DB::table('device_users')->count();
+
+        $this->actingAs($actor)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('data-dashboard-workload', false);
+
+        $this->assertSame($before, $this->databaseSnapshot());
+        $this->assertSame($deviceCount, DB::table('device_users')->count());
+        $this->assertSame('Must remain unchanged', $notification->fresh()->message);
+        $this->assertFalse(Cache::has("deadline_sent_{$actor->id}"));
+        $this->assertSame('unchanged', Cache::get("overload_sent_{$actor->id}"));
+        Mail::assertNothingOutgoing();
+        Queue::assertNothingPushed();
+    }
+
+    public function test_dashboard_workload_summary_query_count_is_stable_as_members_and_tasks_grow(): void
+    {
+        [$actor, $project] = $this->actorProject();
+        $this->task($project, [$actor]);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->workloadService->dashboardSummary($actor);
+        $smallQueryCount = count(DB::getQueryLog());
+
+        $additionalMembers = User::factory()->count(20)->create();
+        foreach ($additionalMembers as $member) {
+            $project->members()->attach($member, [
+                'role' => Project::ROLE_MEMBER,
+                'joined_at' => now(),
+            ]);
+            $this->task($project, [$member]);
+        }
+
+        DB::flushQueryLog();
+        $this->workloadService->dashboardSummary($actor);
+        $largeQueryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertLessThanOrEqual($smallQueryCount, $largeQueryCount);
     }
 
     public function test_workspace_admin_project_admin_and_member_only_see_authorized_shared_scope(): void
@@ -822,6 +1055,21 @@ class WorkloadMonitoringTest extends TestCase
         $result = $this->workloadService->index($actor, $filters);
 
         return collect($result['members']->items())->firstWhere('id', $actor->id);
+    }
+
+    private function assertReportUrl(string $url, ?string $expectedLevel): void
+    {
+        $this->assertSame(route('overload.index', absolute: false), parse_url($url, PHP_URL_PATH));
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+        $this->assertSame('next_7_days', $query['period'] ?? null);
+
+        if ($expectedLevel === null) {
+            $this->assertArrayNotHasKey('level', $query);
+
+            return;
+        }
+
+        $this->assertSame($expectedLevel, $query['level'] ?? null);
     }
 
     /**

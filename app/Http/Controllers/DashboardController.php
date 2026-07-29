@@ -10,18 +10,21 @@ use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Services\NotificationPresentationService;
+use App\Services\WorkloadService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 
 class DashboardController extends Controller
 {
+    public function __construct(private WorkloadService $workloadService) {}
+
     public function index()
     {
         $user = Auth::user();
-        // CATAT DEVICE SETELAH LOGIN
-        $this->afterLogin();
-        $this->sendDeadlineNotificationsPublic($user);
+        $workloadSummary = $this->workloadService->canView($user)
+            ? $this->workloadService->dashboardSummary($user)
+            : null;
 
         $allProjects = $user->projects()->with('tasks.statusWeight')->get();
         $stats = [
@@ -92,7 +95,14 @@ class DashboardController extends Controller
             ->orderBy('due_date')
             ->get();
 
-        return view('dashboard.index', compact('stats', 'recentTasks', 'activeProjects', 'projectStats', 'deadlineTasks'));
+        return view('dashboard.index', compact(
+            'stats',
+            'recentTasks',
+            'activeProjects',
+            'projectStats',
+            'deadlineTasks',
+            'workloadSummary',
+        ));
     }
 
     public function activityLog(Request $request)

@@ -68,16 +68,13 @@ class AppServiceProvider extends ServiceProvider
             'view-workload-monitoring',
             fn (User $user): bool => app(WorkloadService::class)->canView($user),
         );
-        View::composer(
-            ['layouts.sidebar', 'dashboard.partials._workload-link'],
-            function ($view): void {
-                $view->with(
-                    'canViewWorkload',
-                    auth()->check()
-                        && app(WorkloadService::class)->canView(auth()->user()),
-                );
-            },
-        );
+        View::composer('layouts.sidebar', function ($view): void {
+            $view->with(
+                'canViewWorkload',
+                auth()->check()
+                    && app(WorkloadService::class)->canView(auth()->user()),
+            );
+        });
 
         View::composer('layouts.app', function ($view) {
 
