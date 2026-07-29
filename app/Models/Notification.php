@@ -12,6 +12,8 @@ class Notification extends Model
 
     public const TYPE_WORKSPACE_CHAT_MENTION = 'workspace_chat_mention';
 
+    public const TYPE_PROJECT_DISCUSSION_MENTION = 'project_discussion_mention';
+
     protected $table = 'notifications';
 
     protected $fillable = [
@@ -23,6 +25,8 @@ class Notification extends Model
         'project_id',
         'workspace_id',
         'workspace_chat_message_id',
+        'project_thread_id',
+        'project_thread_message_id',
         'url',
         'metadata',
         'read_at',
@@ -56,6 +60,16 @@ class Notification extends Model
     public function workspaceChatMessage(): BelongsTo
     {
         return $this->belongsTo(WorkspaceChatMessage::class);
+    }
+
+    public function projectThread(): BelongsTo
+    {
+        return $this->belongsTo(ProjectThread::class);
+    }
+
+    public function projectThreadMessage(): BelongsTo
+    {
+        return $this->belongsTo(ProjectThreadMessage::class);
     }
 
     public function targetUrl(): ?string

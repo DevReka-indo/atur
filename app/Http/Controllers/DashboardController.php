@@ -421,6 +421,8 @@ class DashboardController extends Controller
                     'project_id' => $n->project_id,
                     'workspace_id' => $n->workspace_id,
                     'workspace_chat_message_id' => $n->workspace_chat_message_id,
+                    'project_thread_id' => $n->project_thread_id,
+                    'project_thread_message_id' => $n->project_thread_message_id,
                     'url' => $n->targetUrl(),
                     'time' => $n->created_at->diffForHumans(),
                 ];

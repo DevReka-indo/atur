@@ -103,12 +103,23 @@
                             {{-- Content --}}
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 mb-0.5">
+                                    @if ($notif->type === \App\Models\Notification::TYPE_PROJECT_DISCUSSION_MENTION)
+                                        <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+                                            <i class="fa-solid fa-comments text-xs" aria-hidden="true"></i>
+                                        </span>
+                                    @endif
                                     <p class="text-sm font-semibold text-gray-900">{{ $notif->title }}</p>
                                     @if (!$isRead)
                                         <span class="w-2 h-2 rounded-full bg-pink-500 flex-shrink-0"></span>
                                     @endif
                                 </div>
                                 <p class="text-sm text-gray-600">{{ $notif->message }}</p>
+                                @if ($notif->type === \App\Models\Notification::TYPE_PROJECT_DISCUSSION_MENTION
+                                    && filled(data_get($notif->metadata, 'project_name')))
+                                    <p class="mt-1 text-xs font-medium text-indigo-600">
+                                        {{ data_get($notif->metadata, 'project_name') }}
+                                    </p>
+                                @endif
                                 <p class="text-xs text-gray-400 mt-1">{{ $notif->created_at->diffForHumans() }}</p>
 
                                 {{-- Actions --}}

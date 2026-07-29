@@ -630,11 +630,27 @@ Route::middleware('auth')->group(function () {
         ->name('discussion.chat')
         ->scopeBindings();
 
+    Route::get('/discussion/{project}/{thread}/messages', [DiscussionController::class, 'messages'])
+        ->middleware('throttle:project-discussion-poll')
+        ->name('discussion.messages.index')
+        ->scopeBindings();
+
+    Route::post('/discussion/{project}/{thread}/read', [DiscussionController::class, 'markThreadRead'])
+        ->middleware('throttle:project-discussion-poll')
+        ->name('discussion.messages.read')
+        ->scopeBindings();
+
+    Route::get('/discussion/{project}/{thread}/mention-candidates', [DiscussionController::class, 'mentionCandidates'])
+        ->middleware('throttle:project-discussion-mentions')
+        ->name('discussion.mention-candidates')
+        ->scopeBindings();
+
     /*
      * Endpoint canonical penyimpanan pesan.
      * Sebelumnya belum memiliki nama route.
      */
     Route::post('/discussion/{project}/{thread}/messages', [DiscussionController::class, 'storeMessage'])
+        ->middleware('throttle:project-discussion-write')
         ->name('discussion.messages.store')
         ->scopeBindings();
 
@@ -642,13 +658,16 @@ Route::middleware('auth')->group(function () {
      * Endpoint legacy tetap dipertahankan tanpa mengambil nama route canonical.
      */
     Route::post('/discussion/{project}/thread/{thread}/messages', [DiscussionController::class, 'storeMessage'])
+        ->middleware('throttle:project-discussion-write')
         ->scopeBindings();
 
     Route::patch('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'updateMessage'])
+        ->middleware('throttle:project-discussion-write')
         ->name('messages.update')
         ->scopeBindings();
 
     Route::delete('/discussion/{project}/thread/{thread}/messages/{message}', [DiscussionController::class, 'destroyMessage'])
+        ->middleware('throttle:project-discussion-write')
         ->name('messages.destroy')
         ->scopeBindings();
 

@@ -48,6 +48,40 @@ class DiscussionRouteTest extends TestCase
         $this->assertSame('discussion/{project}/{thread}/messages', $canonicalRoute->uri());
         $this->assertSame(DiscussionController::class.'@storeMessage', $canonicalRoute->getActionName());
         $this->assertContains('POST', $canonicalRoute->methods());
+        $this->assertContains('throttle:project-discussion-write', $canonicalRoute->gatherMiddleware());
+        $this->assertTrue($canonicalRoute->enforcesScopedBindings());
+    }
+
+    public function test_message_cursor_and_read_routes_have_the_expected_contract(): void
+    {
+        $indexRoute = $this->router()->getRoutes()->match(
+            Request::create('/discussion/123/456/messages', 'GET')
+        );
+        $readRoute = $this->router()->getRoutes()->match(
+            Request::create('/discussion/123/456/read', 'POST')
+        );
+
+        $this->assertSame('discussion.messages.index', $indexRoute->getName());
+        $this->assertSame(DiscussionController::class.'@messages', $indexRoute->getActionName());
+        $this->assertContains('throttle:project-discussion-poll', $indexRoute->gatherMiddleware());
+        $this->assertTrue($indexRoute->enforcesScopedBindings());
+
+        $this->assertSame('discussion.messages.read', $readRoute->getName());
+        $this->assertSame(DiscussionController::class.'@markThreadRead', $readRoute->getActionName());
+        $this->assertContains('throttle:project-discussion-poll', $readRoute->gatherMiddleware());
+        $this->assertTrue($readRoute->enforcesScopedBindings());
+    }
+
+    public function test_mention_candidate_route_is_scoped_and_throttled(): void
+    {
+        $route = $this->router()->getRoutes()->match(
+            Request::create('/discussion/123/456/mention-candidates', 'GET')
+        );
+
+        $this->assertSame('discussion.mention-candidates', $route->getName());
+        $this->assertSame(DiscussionController::class.'@mentionCandidates', $route->getActionName());
+        $this->assertContains('throttle:project-discussion-mentions', $route->gatherMiddleware());
+        $this->assertTrue($route->enforcesScopedBindings());
     }
 
     public function test_legacy_message_store_endpoint_remains_unnamed(): void
@@ -91,8 +125,28 @@ class DiscussionRouteTest extends TestCase
 
         $this->assertIsString($discussionScript);
         $this->assertStringContainsString('preview.textContent =', $discussionScript);
-        $this->assertStringContainsString('text.textContent = message.content', $discussionScript);
-        $this->assertDoesNotMatchRegularExpression('/preview\.innerHTML\s*=/', $discussionScript);
+        $this->assertStringContainsString('document.createTextNode(segment.text)', $discussionScript);
+        $this->assertStringContainsString('mention.textContent = segment.text', $discussionScript);
+        $this->assertStringNotContainsString('innerHTML', $discussionScript);
+    }
+
+    public function test_chat_frontend_contains_cursor_polling_and_visibility_controls(): void
+    {
+        $discussionScript = file_get_contents(resource_path('js/project-discussion.js'));
+
+        $this->assertIsString($discussionScript);
+        $this->assertStringContainsString("url.searchParams.set('before_id'", $discussionScript);
+        $this->assertStringContainsString("url.searchParams.set('after_id'", $discussionScript);
+        $this->assertStringContainsString('new AbortController()', $discussionScript);
+        $this->assertStringContainsString('document.hidden', $discussionScript);
+        $this->assertStringContainsString('pollingDelays = [5000, 10000, 20000, 30000]', $discussionScript);
+        foreach (['ArrowDown', 'ArrowUp', 'Enter', 'Escape'] as $key) {
+            $this->assertStringContainsString($key, $discussionScript);
+        }
+        $this->assertStringContainsString('root.dataset.mentionCandidatesUrl', $discussionScript);
+        $this->assertStringContainsString('scrollIntoView', $discussionScript);
+        $this->assertStringContainsString('ring-indigo-400', $discussionScript);
+        $this->assertStringNotContainsString('attachment', $discussionScript);
     }
 
     public function test_thread_preview_uses_the_eager_loaded_last_message(): void
@@ -128,10 +182,52 @@ class DiscussionRouteTest extends TestCase
             'chat/_message-list',
             'chat/_message-item',
             'chat/_composer',
+            'chat/_load-older',
+            'chat/_new-messages-indicator',
             'chat/_edit-message-modal',
+            'chat/_delete-message-modal',
+            'chat/_empty-state',
+            'chat/_mention-suggestions',
+            'chat/_target-message-state',
         ] as $partial) {
             $this->assertFileExists(resource_path("views/discussion/partials/{$partial}.blade.php"));
         }
+    }
+
+    public function test_project_discussion_migrations_use_short_explicit_constraint_names(): void
+    {
+        $mentionMigration = file_get_contents(database_path(
+            'migrations/2026_07_29_110623_create_project_thread_message_mentions_table.php',
+        ));
+        $notificationMigration = file_get_contents(database_path(
+            'migrations/2026_07_29_110623_add_project_discussion_context_to_notifications_table.php',
+        ));
+
+        foreach ([
+            'pt_mentions_message_fk',
+            'pt_mentions_user_fk',
+            'pt_mentions_message_user_unique',
+            'pt_notif_thread_fk',
+            'pt_notif_message_fk',
+            'pt_notif_message_user_unique',
+        ] as $constraint) {
+            $this->assertLessThanOrEqual(64, strlen($constraint));
+            $this->assertTrue(
+                str_contains($mentionMigration, $constraint)
+                    || str_contains($notificationMigration, $constraint),
+            );
+        }
+    }
+
+    public function test_notification_view_supports_project_discussion_mentions(): void
+    {
+        $view = file_get_contents(resource_path('views/notifications/index.blade.php'));
+
+        $this->assertIsString($view);
+        $this->assertStringContainsString('TYPE_PROJECT_DISCUSSION_MENTION', $view);
+        $this->assertStringContainsString('fa-comments', $view);
+        $this->assertStringContainsString("data_get(\$notif->metadata, 'project_name')", $view);
+        $this->assertStringContainsString("route('notifications.open'", $view);
     }
 
     public function test_discussion_index_and_show_routes_remain_available(): void

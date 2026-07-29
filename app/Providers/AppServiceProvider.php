@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Models\Project;
+use App\Models\ProjectThread;
 use App\Models\User;
 use App\Models\UserNotification;
 use App\Models\Workspace;
@@ -42,6 +44,15 @@ class AppServiceProvider extends ServiceProvider
         });
         RateLimiter::for('workspace-chat-mentions', function (Request $request): Limit {
             return Limit::perMinute(60)->by($this->workspaceChatRateLimitKey($request));
+        });
+        RateLimiter::for('project-discussion-poll', function (Request $request): Limit {
+            return Limit::perMinute(120)->by($this->projectDiscussionRateLimitKey($request));
+        });
+        RateLimiter::for('project-discussion-write', function (Request $request): Limit {
+            return Limit::perMinute(30)->by($this->projectDiscussionRateLimitKey($request));
+        });
+        RateLimiter::for('project-discussion-mentions', function (Request $request): Limit {
+            return Limit::perMinute(60)->by($this->projectDiscussionRateLimitKey($request));
         });
 
         Gate::before(function (User $user): ?bool {
@@ -84,5 +95,15 @@ class AppServiceProvider extends ServiceProvider
             : $workspace;
 
         return implode(':', [$request->user()?->id, $workspaceKey]);
+    }
+
+    private function projectDiscussionRateLimitKey(Request $request): string
+    {
+        $project = $request->route('project');
+        $thread = $request->route('thread');
+        $projectKey = $project instanceof Project ? $project->getKey() : $project;
+        $threadKey = $thread instanceof ProjectThread ? $thread->getKey() : $thread;
+
+        return implode(':', [$request->user()?->id, $projectKey, $threadKey]);
     }
 }

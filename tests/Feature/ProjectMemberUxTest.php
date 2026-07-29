@@ -36,6 +36,7 @@ class ProjectMemberUxTest extends TestCase
             $table->foreignId('project_thread_id');
             $table->foreignId('user_id');
             $table->text('content');
+            $table->timestamp('edited_at')->nullable();
             $table->timestamps();
         });
         Schema::create('thread_user_reads', function (Blueprint $table): void {
@@ -43,6 +44,7 @@ class ProjectMemberUxTest extends TestCase
             $table->foreignId('thread_id');
             $table->foreignId('user_id');
             $table->timestamp('last_read_at')->nullable();
+            $table->foreignId('last_read_message_id')->nullable();
             $table->timestamps();
             $table->unique(['thread_id', 'user_id']);
         });
